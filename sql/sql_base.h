@@ -22,6 +22,7 @@
 #include "sql_trigger.h"                        /* trg_event_type */
 #include "mysqld.h"                             /* key_map */
 #include "table_cache.h"
+#include "clog.h"
 
 class Item_ident;
 struct Name_resolution_context;
@@ -331,6 +332,9 @@ extern Field *view_ref_found;
 
 inline void setup_table_map(TABLE *table, TABLE_LIST *table_list, uint tablenr)
 {
+  CLOG_FUNCTIOND("inline void setup_table_map(TABLE *table, TABLE_LIST *table_list, uint tablenr)");
+  CLOG_TPRINTLN("clean/setup table fields and map.");
+  CLOG_TPRINTLN("Table name = %s",table_list->table_name.str);
   table->used_fields= 0;
   table_list->reset_const_table();
   table->null_row= 0;

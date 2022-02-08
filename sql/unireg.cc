@@ -183,6 +183,8 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   LEX_CUSTRING frm= {0,0};
   StringBuffer<MAX_FIELD_WIDTH> vcols;
   DBUG_ENTER("build_frm_image");
+  CLOG_FUNCTIOND("LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table...)");
+  CLOG_TPRINTLN("  Create a frm (table definition) file");
 
  /* If fixed row records, we need one bit to check for deleted rows */
   if (!(create_info->table_options & HA_OPTION_PACK_RECORD))
@@ -193,13 +195,15 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   thd->variables.sql_mode &= ~MODE_ANSI_QUOTES;
   error= pack_vcols(&vcols, create_fields, create_info->check_constraint_list);
   thd->variables.sql_mode= save_sql_mode;
-
+  CLOG_TPRINTLN("Virtual Column pack = ");
+  CLOG_DISPBUFFER(vcols,vcols.length());
+  
   if (unlikely(error))
     DBUG_RETURN(frm);
 
   if (vcols.length())
     create_info->expression_length= vcols.length() + FRM_VCOL_NEW_BASE_SIZE;
-
+  CLOG_STEP("1","Pack Header");
   error= pack_header(thd, forminfo, create_fields, create_info,
                      (ulong)data_offset, db_file);
   if (unlikely(error))
@@ -208,10 +212,13 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   reclength= uint2korr(forminfo+266);
 
   /* Calculate extra data segment length */
+  CLOG_STEP("2","Calculate extra data segment length");
   str_db_type= *hton_name(create_info->db_type);
+  CLOG_TPRINTLN("db type name = %s",str_db_type);
   /* str_db_type */
   create_info->extra_size= (uint)(2 + str_db_type.length +
                             2 + create_info->connect_string.length);
+  CLOG_TPRINTLN("create_info->extra_size(0x%08X) = (uint)(2 + str_db_type.length(0x%08X) + 2 + create_info->connect_string.length(0x%08X))",create_info->extra_size,str_db_type.length,create_info->connect_string.length);
   /*
     Partition:
       Length of partition info = 4 byte
@@ -219,14 +226,21 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
       Indicator if auto-partitioned table = 1 byte
       => Total 6 byte
   */
+  CLOG_STEP("3","Partition");
   create_info->extra_size+= 6;
-  if (part_info)
+  CLOG_TPRINTLN("  create_info->extra_size(0x%08X)+= 6",create_info->extra_size);
+  if (part_info) {
     create_info->extra_size+= (uint)part_info->part_info_len;
+	CLOG_TPRINTLN("create_info->extra_size(0x%08X)+= (uint)part_info->part_info_len(0x%08X)",create_info->extra_size,part_info->part_info_len);
+  } 
 
   for (i= 0; i < keys; i++)
   {
-    if (key_info[i].parser_name)
+    if (key_info[i].parser_name) {
       create_info->extra_size+= (uint)key_info[i].parser_name->length + 1;
+	  CLOG_TPRINTLN("create_info->extra_size(0x%08X)+= (uint)key_info[%d].parser_name->length(0x%08X) + 1",create_info->extra_size,i,key_info[i].parser_name->length);
+
+      }
   }
 
   options_len= engine_table_options_frm_length(create_info->option_list,
@@ -236,6 +250,7 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   gis_extra2_len= gis_field_options_image(NULL, create_fields);
 #endif /*HAVE_SPATIAL*/
   DBUG_PRINT("info", ("Options length: %u", options_len));
+  CLOG_TPRINTLN("info - Options length: %u", options_len);
 
   if (validate_comment_length(thd, &create_info->comment, TABLE_COMMENT_MAXLEN,
                               ER_TOO_LONG_TABLE_COMMENT, table->str))
@@ -245,6 +260,7 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     store the comment in an extra segment (up to TABLE_COMMENT_MAXLEN bytes).
     Pre 5.5, the limit was 60 characters, with no extra segment-handling.
   */
+  CLOG_STEP("4","If table commnet is longer than TABLE_COMMENT_INLINE_MAXLEN bytes, store the comment in an extra segment");
   if (create_info->comment.length > TABLE_COMMENT_INLINE_MAXLEN)
   {
     forminfo[46]=255;
@@ -269,9 +285,11 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   DBUG_ASSERT(create_info->tabledef_version.length > 0);
   DBUG_ASSERT(create_info->tabledef_version.length <= 255);
 
+  CLOG_STEP("5","prepare frm header");
   prepare_frm_header(thd, reclength, fileinfo, create_info, keys, key_info);
 
   /* one byte for a type, one or three for a length */
+  CLOG_TPRINTLN("One byte for a type, one or three for a length");
   size_t extra2_size= 1 + 1 + create_info->tabledef_version.length;
   if (options_len)
     extra2_size+= 1 + (options_len > 255 ? 3 : 1) + options_len;
@@ -293,22 +311,38 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     extra2_size+= 1 + (create_fields.elements > 255 ? 3 : 1) +
         create_fields.elements;
   }
+  
+  CLOG_TPRINTLN("extra2_size(0x%08X)",extra2_size);
 
   key_buff_length= uint4korr(fileinfo+47);
+  CLOG_TPRINTLN("key_buff_length(0x%08X)=uint4korr(fileinfo+47)",key_buff_length);
 
+  CLOG_STEP("6","my_maclloc frm");
   frm.length= FRM_HEADER_SIZE;                  // fileinfo;
+  CLOG_TPRINTLN("frm.length(0x%08X)= FRM_HEADER_SIZE",frm.length);
   frm.length+= extra2_size + 4;                 // mariadb extra2 frm segment
+  CLOG_TPRINTLN("frm.length(0x%08X)+== extra2_size(0x%08X) + 4;",frm.length,extra2_size);
 
   int2store(fileinfo+4, extra2_size);
+  CLOG_TPRINTLN("fileinfo[4](int2)=extra2_size(0x%08X)",extra2_size);
   int2store(fileinfo+6, frm.length);            // Position to key information
+  CLOG_TPRINTLN("fileinfo[6](int2)=frm.length(0x%08X)",frm.length);
+  
   frm.length+= key_buff_length;
+  CLOG_TPRINTLN("frm.length(0x%08X)+= key_buff_length(0x%08X)",frm.length,key_buff_length);  
   frm.length+= reclength;                       // row with default values
+  CLOG_TPRINTLN("frm.length(0x%08X)+= reclength(0x%08X) row with default values",frm.length,reclength);  
   frm.length+= create_info->extra_size;
+  CLOG_TPRINTLN("frm.length(0x%08X)+= create_info->extra_size(0x%08X)",frm.length,create_info->extra_size);  
 
   filepos= frm.length;
+  CLOG_TPRINTLN("filepos(0x%08X)=frm.length(0x%08X)",filepos,frm.length);  
   frm.length+= FRM_FORMINFO_SIZE;               // forminfo
+  CLOG_TPRINTLN("frm.length(0x%08X)+= FRM_FORMINFO_SIZE(0x%08X)",frm.length,FRM_FORMINFO_SIZE);  
   frm.length+= packed_fields_length(create_fields);
+  CLOG_TPRINTLN("frm.length(0x%08X)+= packed_fields_length(create_fields)",frm.length);  
   frm.length+= create_info->expression_length;
+  CLOG_TPRINTLN("frm.length(0x%08X)+= create_info->expression_length(0x%08X)",frm.length,create_info->expression_length);
 
   if (frm.length > FRM_MAX_SIZE ||
       create_info->expression_length > UINT_MAX32)
@@ -317,16 +351,49 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     DBUG_RETURN(frm);
   }
 
+  CLOG_TPRINTLN("frm.length(0x%08X)",frm.length);
+  
+#ifdef TLEDGER_BUILD111
+  {
+	  uint tldlen;
+	  LEX_CUSTRING tld_image= {0,0};
+	  if(fileinfo[59]=='T')  {
+		  if(tldgr_create_tld_image(thd, create_fields,&tld_image))
+			goto err;
+		  tldlen= TLDGR_TLC_HEADER_SIZE+ uint2korr(tld_image.str+TLDGR_TLC_HEADER_SIZE);
+		  CLOG_TPRINTLN("tldlen(0x%08X)",tldlen);
+		  CLOG_TPRINTLN("!!!!!!!!11 Note, frm image size is frm.len+tld_image but you can find only frm.len at fileinfo[10]");
+		  frm_ptr= (uchar*) my_malloc(frm.length+tldlen, MYF(MY_WME | MY_ZEROFILL |
+		                                            MY_THREAD_SPECIFIC));
+		  if (!frm_ptr)
+		      DBUG_RETURN(frm);
+		  memcpy(frm_ptr+(frm.length), tld_image.str, tldlen);
+	  } else {
+		  frm_ptr= (uchar*) my_malloc(frm.length, MYF(MY_WME | MY_ZEROFILL |
+                                                MY_THREAD_SPECIFIC));
+      	  if (!frm_ptr)
+      		  DBUG_RETURN(frm);
+    //  	  memcpy(frm_ptr+(frm.length-tldlen), tld_image.str, tldlen);
+	  }
+  }
+#else
   frm_ptr= (uchar*) my_malloc(frm.length, MYF(MY_WME | MY_ZEROFILL |
                                               MY_THREAD_SPECIFIC));
   if (!frm_ptr)
-    DBUG_RETURN(frm);
+      DBUG_RETURN(frm);
+#endif
 
-  /* write the extra2 segment */
+
+  CLOG_TPRINTLN("frm_ptr(0x%08X)= (uchar*) my_malloc(frm.length, MYF(MY_WME | MY_ZEROFILL | MY_THREAD_SPECIFIC)",frm_ptr);
+
+  /* write the extra2 segment */  
+  CLOG_STEP("7","write the extra2 segment");
   pos = frm_ptr + 64;
   compile_time_assert(EXTRA2_TABLEDEF_VERSION != '/');
   pos= extra2_write(pos, EXTRA2_TABLEDEF_VERSION,
                     &create_info->tabledef_version);
+
+  CLOG_TPRINTLN("pos(0x%08X)= extra2_write(pos, EXTRA2_TABLEDEF_VERSION,&create_info->tabledef_version(%s))",pos,&create_info->tabledef_version.str);
 
   if (part_info)
     pos= extra2_write(pos, EXTRA2_DEFAULT_PART_ENGINE,
@@ -339,7 +406,7 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     pos= engine_table_options_frm_image(pos, create_info->option_list,
                                         create_fields, keys, key_info);
   }
-
+  CLOG_STEP("8","HAVE_SPATIAL");
 #ifdef HAVE_SPATIAL
   if (gis_extra2_len)
   {
@@ -363,10 +430,13 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     pos= extra2_write_field_properties(pos, create_fields);
 
   int4store(pos, filepos); // end of the extra2 segment
+  CLOG_TPRINTLN("int4store(pos(0x%08X), filepos(0x%08X)",pos,filepos);
   pos+= 4;
 
   DBUG_ASSERT(pos == frm_ptr + uint2korr(fileinfo+6));
-  key_info_length= pack_keys(pos, keys, key_info, data_offset);
+   key_info_length= pack_keys(pos, keys, key_info, data_offset);
+  CLOG_TPRINTLN("key_info_length(0x%08X)= pack_keys(pos(0x%08X), keys, key_info, data_offset(0x%08X))",key_info_length,pos,data_offset);
+  
   if (key_info_length > UINT_MAX16)
   {
     my_printf_error(ER_CANT_CREATE_TABLE,
@@ -389,13 +459,21 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
   }
 
   memcpy(frm_ptr, fileinfo, FRM_HEADER_SIZE);
+  CLOG_STEP("9","FRM_HEADER_IMAGE LAST= ");
+  CLOG_DISPBUFFER(frm_ptr,FRM_HEADER_SIZE);
 
   pos+= key_buff_length;
+  CLOG_TPRINTLN("pos(0x%08X_+=key_buff_length(0x%08X)",pos,key_buff_length);
+  CLOG_STEP("9","Make Empty Record");
   if (make_empty_rec(thd, pos, create_info->table_options, create_fields,
                      reclength, data_offset))
     goto err;
 
   pos+= reclength;
+  CLOG_TPRINTLN("pos(0x%08X)+=reclength(0x%08X)",pos,reclength);
+  CLOG_STEP("10","Write connect_string & db_type");
+  CLOG_TPRINTLN("create_info->connect_string.str=%s, str_db_type.str=%s",create_info->connect_string.str,str_db_type.str);
+  
   int2store(pos, create_info->connect_string.length);
   pos+= 2;
   memcpy(pos, create_info->connect_string.str, create_info->connect_string.length);
@@ -419,12 +497,14 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
     pos+= 6;
   }
 
+  CLOG_STEP("11","Write key");
   for (i= 0; i < keys; i++)
   {
     if (key_info[i].parser_name)
     {
       memcpy(pos, key_info[i].parser_name->str, key_info[i].parser_name->length + 1);
       pos+= key_info[i].parser_name->length + 1;
+	  CLOG_TPRINTLN("key_info[%d].parser_name->str=%s",i,key_info[i].parser_name->str);
     }
   }
   if (forminfo[46] == (uchar)255)       // New style MySQL 5.5 table comment
@@ -437,6 +517,8 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
 
   memcpy(frm_ptr + filepos, forminfo, 288);
   pos= frm_ptr + filepos + 288;
+  CLOG_TPRINTLN("pos(0x%08X)= frm_ptr(0x%08X) + filepos(0x%08X) + 288",pos,frm_ptr,filepos);
+  CLOG_STEP("12","pack_fields");
   if (pack_fields(&pos, create_fields, create_info, data_offset))
     goto err;
 
@@ -494,11 +576,15 @@ int rea_create_table(THD *thd, LEX_CUSTRING *frm,
                      const char *path, const char *db, const char *table_name,
                      HA_CREATE_INFO *create_info, handler *file,
                      bool no_ha_create_table)
-{
+{	
   DBUG_ENTER("rea_create_table");
+  CLOG_FUNCTIOND("int rea_create_table(..)");
+  CLOG_TPRINTLN("P2 frm : Binary frm image of the table to create");
+  CLOG_DISPBUFFER(frm->str, frm->length);
 
   if (no_ha_create_table)
   {
+    CLOG_STEP("1","write frm!");
     if (writefrm(path, db, table_name, true, frm->str, frm->length))
       goto err_frm;
   }
@@ -511,6 +597,7 @@ int rea_create_table(THD *thd, LEX_CUSTRING *frm,
 
   if (!no_ha_create_table)
   {
+    CLOG_STEP("2","ha create table");
     if (ha_create_table(thd, path, db, table_name, create_info, frm))
       goto err_part;
   }
@@ -524,6 +611,63 @@ err_frm:
   DBUG_RETURN(1);
 } /* rea_create_table */
 
+#ifdef TRUSTSQL_BUILD
+/**
+  Create a frm (table definition) file and the tables
+
+  @param thd           Thread handler
+  @param frm           Binary frm image of the table to create
+  @param tld           Binary trusted image of the table to create
+  @param path          Name of file (including database, without .frm)
+  @param db            Data base name
+  @param table_name    Table name
+  @param create_info   create info parameters
+  @param file          Handler to use or NULL if only frm needs to be created
+
+  @retval 0   ok
+  @retval 1   error
+*/
+
+int rea_create_trusted_table(THD *thd, LEX_CUSTRING *frm, LEX_CUSTRING *tld,
+                     const char *path, const char *db, const char *table_name,
+                     HA_CREATE_INFO *create_info, handler *file,
+                     bool no_ha_create_table)
+{
+  DBUG_ENTER("rea_create_table");
+  CLOG_FUNCTIOND("int rea_create_trusted_table(..)");
+  CLOG_TPRINTLN("P2 frm : Binary frm image of the table to create");
+  //ZLOG_DISPBUFFER(frm->str, frm->length);
+
+  if (no_ha_create_table)
+  {
+    CLOG_STEP("1","write frm!");
+    if (writefrm(path, db, table_name, true, frm->str, frm->length))
+      goto err_frm;
+  }
+
+  if (thd->variables.keep_files_on_create)
+    create_info->options|= HA_CREATE_KEEP_FILES;
+
+  if (file->ha_create_partitioning_metadata(path, NULL, CHF_CREATE_FLAG))
+    goto err_part;
+
+  if (!no_ha_create_table)
+  {
+    CLOG_STEP("2","ha create table");
+    if (ha_create_trusted_table(thd, path, db, table_name, create_info, frm, tld))
+      goto err_part;
+  }
+
+  DBUG_RETURN(0);
+
+err_part:
+  file->ha_create_partitioning_metadata(path, NULL, CHF_DELETE_FLAG);
+err_frm:
+  deletefrm(path);
+  DBUG_RETURN(1);
+} /* rea_create_table */
+#endif
+
 
 /* Pack keyinfo and keynames to keybuff for save in form-file. */
 
@@ -535,7 +679,12 @@ static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,
   KEY *key,*end;
   KEY_PART_INFO *key_part,*key_part_end;
   DBUG_ENTER("pack_keys");
-
+  CLOG_FUNCTIOND("static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,ulong data_offset)");
+  CLOG_TPRINTLN(" P1 :uchar *keybuff(0x%08X)",keybuff);
+  CLOG_TPRINTLN(" P2 :uintr key_count(0x%08X)",key_count);
+  CLOG_TPRINTLN(" P3 :KEY *keyinfo");
+  CLOG_TPRINTLN(" P4 :ulong data_offset(0x%08X",data_offset);
+  
   pos=keybuff+6;
   key_parts=0;
   for (key=keyinfo,end=keyinfo+key_count ; key != end ; key++)
@@ -550,6 +699,10 @@ static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,
     DBUG_PRINT("loop", ("flags: %lu  key_parts: %d  key_part: %p",
                         key->flags, key->user_defined_key_parts,
                         key->key_part));
+	CLOG_TPRINTLN("loop - flags: %lu  key_parts: %d  key_part: %p",
+                        key->flags, key->user_defined_key_parts,
+                        key->key_part);
+	
     for (key_part=key->key_part,key_part_end=key_part+key->user_defined_key_parts ;
 	 key_part != key_part_end ;
 	 key_part++)
@@ -559,6 +712,9 @@ static uint pack_keys(uchar *keybuff, uint key_count, KEY *keyinfo,
       DBUG_PRINT("loop",("field: %d  startpos: %lu  length: %d",
 			 key_part->fieldnr, key_part->offset + data_offset,
                          key_part->length));
+	  CLOG_TPRINTLN("loop - field: %d  startpos: %lu  length: %d",
+			 key_part->fieldnr, key_part->offset + data_offset,
+                         key_part->length);
       int2store(pos,key_part->fieldnr+1+FIELD_NAME_USED);
       offset= (uint) (key_part->offset+data_offset+1);
       int2store(pos+2, offset);
@@ -691,6 +847,7 @@ static bool pack_header(THD *thd, uchar *forminfo,
   uint table_options= create_info->table_options;
   size_t length, reclength, totlength, n_length, com_length;
   DBUG_ENTER("pack_header");
+  CLOG_FUNCTIOND("static bool pack_header(...) - Make formheader");
 
   if (create_fields.elements > MAX_FIELDS)
   {
@@ -706,10 +863,17 @@ static bool pack_header(THD *thd, uchar *forminfo,
   create_info->field_check_constraints= 0;
 
   /* Check fields */
+  CLOG_STEP("1","Check fields");
   List_iterator<Create_field> it(create_fields);
   Create_field *field;
   while ((field=it++))
   {
+    CLOG_STEP("1-1","validate comment length!");
+	CLOG_TPRINTLN("Field name = %s",field->field_name.str);
+	CLOG_TPRINTLN("field->length(0x%08X)",field->length);
+	CLOG_TPRINTLN("field->pack_length(0x%08X)",field->pack_length);
+	CLOG_TPRINTLN("field->off_set(0x%08X)",field->offset);
+
     if (validate_comment_length(thd, &field->comment, COLUMN_COMMENT_MAXLEN,
                                 ER_TOO_LONG_FIELD_COMMENT,
                                 field->field_name.str))
@@ -717,24 +881,35 @@ static bool pack_header(THD *thd, uchar *forminfo,
 
     totlength+= (size_t)field->length;
     com_length+= field->comment.length;
+    CLOG_TPRINTLN("totalength(0x%08X)+=(size_t)field->length(0x%08X)",totlength,(size_t)field->length);
+	CLOG_TPRINTLN("com_length(0x%08X)+=field->comment.length(0x%08X)",com_length,field->comment.length);
+	
     /*
       We mark first TIMESTAMP field with NOW() in DEFAULT or ON UPDATE
       as auto-update field.
     */
+    CLOG_STEP("1-2","We mark first TIMESTAMP field with NOW() in DEFAULT or ON UPDATE as auto-update field");
     if (field->real_field_type() == MYSQL_TYPE_TIMESTAMP &&
         MTYP_TYPENR(field->unireg_check) != Field::NONE &&
-	!time_stamp_pos)
-      time_stamp_pos= (uint) field->offset+ (uint) data_offset + 1;
+	!time_stamp_pos) {
+		time_stamp_pos= (uint) field->offset+ (uint) data_offset + 1;
+		CLOG_TPRINTLN("time_stamp_pos(0x%08X) = (uint) field->offset(0x%08X)+ (uint) data_offset(0x%08X) + 1",time_stamp_pos,field->offset,data_offset);
+    }
     length=field->pack_length;
-    if ((uint) field->offset+ (uint) data_offset+ length > reclength)
-      reclength=(uint) (field->offset+ data_offset + length);
+	CLOG_TPRINTLN("length(0x%08X) = field->pack_length(0x%08X)",length,field->pack_length);
+    if ((uint) field->offset+ (uint) data_offset+ length > reclength) {
+    	reclength=(uint) (field->offset+ data_offset + length);
+		CLOG_TPRINTLN("reclength(0x%08X)=(uint) (field->offset(0x%08X)+ data_offset(0x%08X) + length(0x%08X))",reclength,field->offset,data_offset,length);
+    }
     n_length+= field->field_name.length + 1;
+	CLOG_TPRINTLN("n_length(0x%08X)+= field->field_name.length(0x%08X) + 1",n_length,field->field_name.length);
     field->interval_id=0;
     field->save_interval= 0;
+	CLOG_STEP("1-3","Column Interval");
     if (field->interval)
     {
       uint old_int_count=int_count;
-
+	  CLOG_TPRINTLN("field->charset->mbminlen(0x%08X)",field->charset->mbminlen);      
       if (field->charset->mbminlen > 1)
       {
         /* 
@@ -754,7 +929,8 @@ static bool pack_header(THD *thd, uchar *forminfo,
         field->interval->type_names[field->interval->count]= 0;
         field->interval->type_lengths=
           (uint *) thd->alloc(sizeof(uint) * field->interval->count);
- 
+
+		CLOG_TPRINTLN("field->interval->count(0x%08X)",field->interval->count);       
         for (uint pos= 0; pos < field->interval->count; pos++)
         {
           char *dst;
@@ -770,11 +946,18 @@ static bool pack_header(THD *thd, uchar *forminfo,
       }
 
       field->interval_id=get_interval_id(&int_count,create_fields,field);
+	  CLOG_TPRINTLN("field->interval_id(0x%08X)",field->interval_id);
+	  CLOG_TPRINTLN("field->interval->type_names(%s), field->interval->type_lengths",field->interval->type_names,field->interval->type_lengths);
       if (old_int_count != int_count)
       {
-	for (const char **pos=field->interval->type_names ; *pos ; pos++)
-	  int_length+=(uint) strlen(*pos)+1;	// field + suffix prefix
-	int_parts+=field->interval->count+1;
+		for (const char **pos=field->interval->type_names ; *pos ; pos++) {
+	  		int_length+=(uint) strlen(*pos)+1;	// field + suffix prefix
+		    CLOG_TPRINTLN("pos =%s",*pos);
+	  		CLOG_TPRINTLN("int_length(0x%08X)+=(uint) strlen(*pos)(0x%08X)+1",int_length,(uint) strlen(*pos));			
+		}
+		int_parts+=field->interval->count+1;
+		CLOG_TPRINTLN("int_parts(0x%08X)+=field->interval->count(0x%08X)+1;",int_parts,field->interval->count);
+		
       }
     }
     if (f_maybe_null(field->pack_flag))
@@ -783,8 +966,10 @@ static bool pack_header(THD *thd, uchar *forminfo,
       create_info->field_check_constraints++;
   }
   int_length+=int_count*2;			// 255 prefix + 0 suffix
+  CLOG_TPRINTLN("int_length(0x%08X)+=int_count(0x%08X)*2",int_length,int_count);
 
   /* Save values in forminfo */
+  CLOG_STEP("2","Save values in forminfo");
   if (reclength > (ulong) file->max_record_length())
   {
     my_error(ER_TOO_BIG_ROWSIZE, MYF(0), static_cast<long>(file->max_record_length()));
@@ -792,32 +977,57 @@ static bool pack_header(THD *thd, uchar *forminfo,
   }
 
   /* Hack to avoid bugs with small static rows in MySQL */
+  CLOG_STEP("3","Hack to avoid bugs with small static rows in MySQL");
   reclength= MY_MAX(file->min_record_length(table_options), reclength);
   length= n_length + create_fields.elements*FCOMP + FRM_FORMINFO_SIZE +
           int_length + com_length + create_info->expression_length;
+  CLOG_TPRINTLN("length(0x%08X) = n_length(0x%08X) + create_fields.elements(0x%08X)*FCOMP(0x%08X) + FRM_FORMINFO_SIZE(0x%08X) + int_length(0x%08X) + com_length(0x%08X) + create_info->expression_length(0x%08X)",
+  		length, n_length, create_fields.elements,FCOMP, FRM_FORMINFO_SIZE,int_length, com_length,create_info->expression_length);		
+  
   if (length > 65535L || int_count > 255)
   {
     my_message(ER_TOO_MANY_FIELDS, "Table definition is too large", MYF(0));
     DBUG_RETURN(1);
   }
 
+  CLOG_STEP("4","Make forminfo..");
+  CLOG_TPRINTLN("FRM_FORMIINFO_SIZE=%d",FRM_FORMINFO_SIZE);
   bzero((char*)forminfo,FRM_FORMINFO_SIZE);
   int2store(forminfo,length);
+  CLOG_TPRINTLN("forminfo[0](int2)=length(0x%08X)",length);  
   int2store(forminfo+258,create_fields.elements);
+  CLOG_TPRINTLN("forminfo[258](int2)=create_fields.elements(0x%08X)",create_fields.elements);
   // bytes 260-261 are unused
+  CLOG_TPRINTLN("forminfo[260~261] are unused");    
   int2store(forminfo+262,totlength);
+  CLOG_TPRINTLN("forminfo[262](int2)=totlength(0x%08X)",totlength);
   // bytes 264-265 are unused
+  CLOG_TPRINTLN("forminfo[264~265] are unused");      
   int2store(forminfo+266,reclength);
+  CLOG_TPRINTLN("forminfo[266](int2)=reclength(0x%08X)",reclength);
   int2store(forminfo+268,n_length);
+  CLOG_TPRINTLN("forminfo[268](int2)=n_length(0x%08X)",n_length);
   int2store(forminfo+270,int_count);
+  CLOG_TPRINTLN("forminfo[220](int2)=int_count(0x%08X)",int_count);
   int2store(forminfo+272,int_parts);
+  CLOG_TPRINTLN("forminfo[272](int2)=int_parts(0x%08X)",int_parts);
   int2store(forminfo+274,int_length);
+  CLOG_TPRINTLN("forminfo[274](int2)=int_length(0x%08X)",int_length);
   int2store(forminfo+276,time_stamp_pos);
+  CLOG_TPRINTLN("forminfo[276](int2)=time_stamp_pos(0x%08X)",time_stamp_pos);
   int2store(forminfo+278,80);			/* Columns needed */
+  CLOG_TPRINTLN("forminfo[278](int2)=80");		  
   int2store(forminfo+280,22);			/* Rows needed */
+  CLOG_TPRINTLN("forminfo[280](int2)=22");		    
   int2store(forminfo+282,null_fields);
+  CLOG_TPRINTLN("forminfo[282](int2)=null_fields(0x%08X)",null_fields);
   int2store(forminfo+284,com_length);
+  CLOG_TPRINTLN("forminfo[284](int2)=com_length(0x%08X)",com_length);
   int2store(forminfo+286,create_info->expression_length);
+  CLOG_TPRINTLN("forminfo[286](int2)=create_info->expression_length(0x%08X)",create_info->expression_length);
+  
+  CLOG_DISPBUFFER(forminfo,FRM_FORMINFO_SIZE);
+  
   DBUG_RETURN(0);
 } /* pack_header */
 
@@ -854,28 +1064,42 @@ static size_t packed_fields_length(List<Create_field> &create_fields)
   Create_field *field;
   size_t length= 0;
   DBUG_ENTER("packed_fields_length");
+  CLOG_FUNCTIOND("static size_t packed_fields_length(List<Create_field> &create_fields)");
 
   List_iterator<Create_field> it(create_fields);
   uint int_count=0;
   while ((field=it++))
   {
+    CLOG_TPRINTLN("field name = %s",field->field_name.str);
+	CLOG_TPRINTLN("if(field->interval_id(0x%08X)) > int_count(0x%08X)",field->interval_id,int_count);
     if (field->interval_id > int_count)
     {
       int_count= field->interval_id;
+	  CLOG_TPRINTLN("int_count(0x%08X)= field->interval_id",int_count);
       length++;
+	  CLOG_TPRINTLN("length++(0x%08X)",length);
+	  
       for (int i=0; field->interval->type_names[i]; i++)
       {
+        CLOG_TPRINTLN("field->interval->type_names[%d](0x%08X)",i,field->interval->type_names[i]);
         length+= field->interval->type_lengths[i];
+		CLOG_TPRINTLN("length(0x%08X)+= field->interval->type_lengths[%d](0x%08X)",length,i,field->interval->type_lengths[i]);
         length++;
+		CLOG_TPRINTLN("length++(0x%08X)",length);		
       }
       length++;
+	  CLOG_TPRINTLN("length++(0x%08X)",length);
     }
 
     length+= FCOMP;
+	CLOG_TPRINTLN("length(0x%08X)+=FCOMP(0x%08X)",length,FCOMP);
     length+= field->field_name.length + 1;
+	CLOG_TPRINTLN("length(0x%08X)+=field->field_name.length(0x%08X) + 1;",length,field->field_name.length);
     length+= field->comment.length;
+	CLOG_TPRINTLN("length(0x%08X)+= field->comment.length(0x%08X)",length, field->comment.length);
   }
   length+= 2;
+  CLOG_TPRINTLN("length(0x%08X)+=2",length);
   DBUG_RETURN(length);
 }
 
@@ -890,21 +1114,34 @@ static bool pack_fields(uchar **buff_arg, List<Create_field> &create_fields,
   size_t comment_length= 0;
   Create_field *field;
   DBUG_ENTER("pack_fields");
+  CLOG_FUNCTIOND("static bool pack_fields(...)  - Save fields, filednames and intervals");
 
   /* Write field info */
   List_iterator<Create_field> it(create_fields);
   int_count=0;
+  CLOG_STEP("1", "pack field while");
   while ((field=it++))
   {
     uint recpos;
+	CLOG_TPRINTLN("field name=%s",field->field_name.str);
     int2store(buff+3, field->length);
+	CLOG_TPRINTLN("buff(0x%08X)+3(int2s)= field->length(0x%08X)",buff,field->length);
     /* The +1 is here becasue the col offset in .frm file have offset 1 */
     recpos= field->offset+1 + (uint) data_offset;
+	CLOG_TPRINTLN("recpos(0x%08X)= field->offset(0x%08X)+1 + (uint) data_offset(0x%08X);",recpos,field->offset,data_offset);
     int3store(buff+5,recpos);
+	CLOG_TPRINTLN("buff(0x%08X)+5(int3s)= recpos(0x%08X)",buff,recpos);
+	
     int2store(buff+8,field->pack_flag);
+	CLOG_TPRINTLN("buff(0x%08X)+8(int2s)= field->pack_flag(0x%08X)",buff,field->pack_flag);
+	
     buff[10]= (uchar) field->unireg_check;
+	CLOG_TPRINTLN("buff[10]=(uchar) field->unireg_check(0x%08X)",field->unireg_check);
     buff[12]= (uchar) field->interval_id;
+	CLOG_TPRINTLN("buff[12]=(uchar) field->interval_id;(0x%08X)",field->interval_id);
     buff[13]= (uchar) field->real_field_type();
+	CLOG_TPRINTLN("buff[13]=(uchar) field->real_field_type()(0x%08X)",field->real_field_type());
+
     if (field->real_field_type() == MYSQL_TYPE_GEOMETRY)
     {
       buff[11]= 0;
@@ -1023,8 +1260,10 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
   Create_field *field;
   enum_check_fields old_count_cuted_fields= thd->count_cuted_fields;
   DBUG_ENTER("make_empty_rec");
+  CLOG_FUNCTIOND("static bool make_empty_rec(...) - save an empty record on start of formfile");
 
   /* We need a table to generate columns for default values */
+  CLOG_STEP("1","We need a table to generate columns for default values");
   bzero((char*) &table, sizeof(table));
   bzero((char*) &share, sizeof(share));
   table.s= &share;
@@ -1041,9 +1280,12 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
 
   List_iterator<Create_field> it(create_fields);
   thd->count_cuted_fields= CHECK_FIELD_WARN;    // To find wrong default values
+  CLOG_STEP("2","--- while(field)");
   while ((field=it++))
   {
     /* regfield don't have to be deleted as it's allocated on THD::mem_root */
+	CLOG_STEP("2-1","make_field(...)");
+	CLOG_TPRINTLN("field name = %s",field->field_name.str);
     Field *regfield= make_field(&share, thd->mem_root,
                                 buff+field->offset + data_offset,
                                 (uint32)field->length,
@@ -1065,7 +1307,9 @@ static bool make_empty_rec(THD *thd, uchar *buff, uint table_options,
     }
 
     /* save_in_field() will access regfield->table->in_use */
+	CLOG_STEP("2-2","save_in_field() will access regfield->table->in_use");
     regfield->init(&table);
+	CLOG_TPRINTLN("field->flags(0x%08X)",field->flags);
 
     if (!(field->flags & NOT_NULL_FLAG))
     {

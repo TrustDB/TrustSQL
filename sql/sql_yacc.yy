@@ -68,6 +68,8 @@
 #include "sql_lex.h"
 #include "sql_sequence.h"
 #include "my_base.h"
+#include "clog.h"
+#include "trustsql_patch.h"
 
 /* this is to get the bison compilation windows warnings out */
 #ifdef _MSC_VER
@@ -108,12 +110,14 @@ int yylex(void *yylval, void *yythd);
 #define my_yyabort_error(A)                      \
   do { my_error A; MYSQL_YYABORT; } while(0)
 
+/*
 #ifndef DBUG_OFF
 #define YYDEBUG 1
 #else
 #define YYDEBUG 0
 #endif
-
+*/
+#define YYDEBUG 1
 
 /**
   @brief Bison callback to report a syntax/OOM error
@@ -908,6 +912,23 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
    This makes the code grep-able, and helps maintenance.
 */
 
+
+/*
+  Reserved keywords and operators
+*/
+
+/*
+  TLEDGER - Reserved keywords and operators
+*/
+%token  TRUSTED_SYM
+%token  SIGNATURE_SYM
+%token  DSA_ALGORITHM_SYM
+%token  INPUTS_SYM
+%token  VERIFY_SYM
+%token  ORDERED_SYM
+%token  TIMED_SYM
+%token  TABLE_ISSUER_SYM
+%token  TRUSTDB_SIGN_TEXT_TRANSFORM_SYM
 
 /*
   Reserved keywords and operators
@@ -1712,7 +1733,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
       SELECT * FROM t1 FOR SYSTEM_TIME AS OF TIMESTAMP CONCAT(@date,' ',@time);
 
   - PERIOD: identifier, period for system time:
-      SELECT period FROM t1;
+      SELECT period FROM t1;5
       ALTER TABLE DROP PERIOD FOR SYSTEM TIME;
 
   - SYSTEM: identifier, system versioning:
@@ -1893,6 +1914,10 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
         opt_if_exists_table_element opt_if_not_exists_table_element
         opt_recursive opt_format_xid
 
+/* Trusted Ledger */
+%type <num>
+		opt_trusted_or_temporary        
+
 %type <object_ddl_options>
         create_or_replace
         opt_if_not_exists
@@ -1960,6 +1985,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, size_t *yystacksize);
         simple_target_specification
         condition_number
         reset_lex_expr
+        
 
 %type <item_param> param_marker
 
@@ -2689,7 +2715,7 @@ connection_name:
 /* create a table */
 
 create:
-          create_or_replace opt_temporary TABLE_SYM opt_if_not_exists table_ident
+          create_or_replace opt_trusted_or_temporary TABLE_SYM opt_if_not_exists table_ident
           {
             LEX *lex= thd->lex;
             lex->create_info.init();
@@ -6594,6 +6620,12 @@ field_list_item:
         | key_def
         | constraint_def
         | period_for_system_time
+        | signature_def {
+			Lex->trust_options->add_sig_field_info(thd, Lex->lex_sig_field_info);
+          }
+        | signature_order_def {
+	        Lex->trust_options->add_sig_field_info(thd, Lex->lex_sig_field_info);
+          }          
         ;
 
 column_def:
@@ -6702,6 +6734,74 @@ period_for_system_time:
             info.set_system_time($4, $6);
           }
         ;
+
+signature_def:
+        opt_constraint SIGNATURE_SYM '(' ident ')' 
+		{
+			CLOG_TPRINTLN("yacc:signature_def-> opt_constraint SIGNATYRE_SYM ( ident )");			
+			Lex->lex_sig_field_info = new (thd->mem_root) LEX_sig_field_info();
+			Lex->lex_sig_field_info->set_sig_name(&$1,&$4);
+		}
+
+        INPUTS_SYM '(' DSA_ident_list ')' 
+		{
+			CLOG_TPRINTLN("yacc:signature_def->INPUTS_SYM ( DSA_ident_list )"); 
+		}
+
+        verify_key_def	
+        {
+			CLOG_TPRINTLN("yacc:signature_def->verify_key_def"); 
+        }
+        ;
+
+verify_key_def:
+        VERIFY_SYM KEY_SYM VALUE_SYM '(' HEX_STRING ')'
+        {
+			Lex->lex_sig_field_info->set_fixed_field_verification_key_value(&$5);
+        }
+        | VERIFY_SYM KEY_SYM '(' ident ')' 
+		{
+			Lex->lex_sig_field_info->set_verification_column_name(&$4);
+		}
+
+        | VERIFY_SYM KEY_SYM TABLE_ISSUER_SYM
+        {
+			Lex->lex_sig_field_info->verification_key_type=TABLE_ISSUER_KEY;
+        }
+        ;
+
+DSA_ident_list:
+ 		simple_ident
+		{
+			CLOG_TPRINTLN("yacc:signature_def->DSA_ident_list->simple_ident");
+			Lex->lex_sig_field_info->add_sig_input_field(thd,$1);
+
+		}
+		| DSA_ident_list ',' simple_ident
+		{
+			CLOG_TPRINTLN("yacc:signature_def->DSA_ident_list->(DSA_ident_list ',' simple_ident)");
+			Lex->lex_sig_field_info->add_sig_input_field(thd,$3);
+		}
+		;
+
+signature_order_def:
+        opt_constraint SIGNATURE_SYM '(' ident ')' ORDERED_SYM '(' ident ')'   
+		{
+			CLOG_TPRINTLN("yacc:signature_def-> opt_constraint SIGNATYRE_SYM ( ident )");			
+			Lex->lex_sig_field_info = new (thd->mem_root) LEX_sig_field_info();
+			Lex->lex_sig_field_info->set_sig_name(&$1,&$4);
+			Lex->lex_sig_field_info->set_order_column_name(&$8);			
+		}
+		
+		| opt_constraint SIGNATURE_SYM '(' ident ')' ORDERED_SYM '(' ident ')' TIMED_SYM '(' ident ')'   
+		{
+			CLOG_TPRINTLN("yacc:signature_def-> opt_constraint SIGNATYRE_SYM ( ident )");			
+			Lex->lex_sig_field_info = new (thd->mem_root) LEX_sig_field_info();
+			Lex->lex_sig_field_info->set_sig_name(&$1,&$4);
+			Lex->lex_sig_field_info->set_order_column_name(&$8);
+			Lex->lex_sig_field_info->set_time_column_name(&$12);
+		}
+		;        
 
 opt_check_constraint:
           /* empty */      { $$= (Virtual_column_info*) 0; }
@@ -13372,10 +13472,25 @@ opt_if_exists:
         }
         ;
 
+/* TRUSTED LEDGER */
+opt_trusted_or_temporary:  
+          /* empty */ { $$= 0; }
+		| TRUSTED_SYM { 
+				Lex->trust_options = new (thd->mem_root)LEX_trust_options(1);	//1 Trusted
+				$$= HA_LEX_CREATE_TRUSTED_TABLE; 
+				} 
+		| TRUSTED_SYM ',' ORDERED_SYM {
+				Lex->trust_options = new (thd->mem_root)LEX_trust_options(2);   //2 Trusted & Ordered
+				$$= HA_LEX_CREATE_TRUSTED_ORDERED_TABLE; 
+				}
+		| TEMPORARY { $$= HA_LEX_CREATE_TMP_TABLE; }     
+        ;
+		
 opt_temporary:
           /* empty */ { $$= 0; }
         | TEMPORARY { $$= HA_LEX_CREATE_TMP_TABLE; }
         ;
+        
 /*
 ** Insert : add new data to table
 */
@@ -16390,6 +16505,13 @@ option_value_no_option_type:
         | '@' ident_or_text equal expr
           {
             if (unlikely(Lex->set_user_variable(thd, &$2, $4)))
+              MYSQL_YYABORT;
+          } 
+        | TRUSTDB_SIGN_TEXT_TRANSFORM_SYM '@' ident_or_text equal expr
+          {
+            Item *transformed;
+            transformed = transform_text_for_sign(thd, $5);            
+            if (unlikely(Lex->set_user_variable(thd, &$3, transformed)))
               MYSQL_YYABORT;
           }
         | '@' '@' opt_var_ident_type ident_sysvar_name equal set_expr_or_default

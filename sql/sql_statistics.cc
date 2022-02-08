@@ -31,6 +31,7 @@
 #include "uniques.h"
 #include "my_atomic.h"
 #include "sql_show.h"
+#include "clog.h"
 
 /*
   The system variable 'use_stat_tables' can take one of the
@@ -85,7 +86,8 @@ static
 inline void init_table_list_for_stat_tables(TABLE_LIST *tables, bool for_write)
 {
   uint i;
-
+  CLOG_FUNCTIOND("static inline void init_table_list_for_stat_tables(TABLE_LIST *tables, bool for_write)");
+  CLOG_PRINTLN("The function builds a list of TABLE_LIST elements for system statistical tables...");
   memset((char *) &tables[0], 0, sizeof(TABLE_LIST) * STATISTICS_TABLES);
 
   for (i= 0; i < STATISTICS_TABLES; i++)
@@ -258,6 +260,8 @@ inline int open_stat_tables(THD *thd, TABLE_LIST *tables,
                             bool for_write)
 {
   int rc;
+  CLOG_FUNCTIOND("static inline int open_stat_tables(THD *thd, TABLE_LIST *tables,...");
+  CLOG_PRINTLN("Open all statistical tables and lock them");
 
   Dummy_error_handler deh; // suppress errors
   thd->push_internal_handler(&deh);
@@ -3114,9 +3118,12 @@ void delete_stat_values_for_table_share(TABLE_SHARE *table_share)
 static
 bool statistics_for_tables_is_needed(THD *thd, TABLE_LIST *tables)
 {
-  if (!tables)
+  CLOG_FUNCTIOND("static bool statistics_for_tables_is_needed(THD *thd, TABLE_LIST *tables)");
+  CLOG_TPRINTLN("Check whether any statistics is to be read for tables from a table list");
+	if (!tables)
     return FALSE;
   
+  CLOG_STEP("1","Check command for statistics read");
   if (!statistics_for_command_is_needed(thd))
     return FALSE;
 
@@ -3126,6 +3133,7 @@ bool statistics_for_tables_is_needed(THD *thd, TABLE_LIST *tables)
     in a deadlock.
   */
 
+  CLOG_STEP("2","Do not read statitics for any query that explicity involves statistical tables...");
   for (TABLE_LIST *tl= tables; tl; tl= tl->next_global)
   {
     if (!tl->is_view_or_derived() && !is_temporary_table(tl) && tl->table)
@@ -3255,18 +3263,22 @@ int read_statistics_for_tables_if_needed(THD *thd, TABLE_LIST *tables)
   Open_tables_backup open_tables_backup;
 
   DBUG_ENTER("read_statistics_for_tables_if_needed");
-
   DEBUG_SYNC(thd, "statistics_read_start");
+  CLOG_FUNCTIOND("int read_statistics_for_tables_if_needed(THD *thd, TABLE_LIST *tables)");
+  CLOG_TPRINTLN("Read statistics for tables from a table list if it is needed");
 
+  CLOG_STEP("1","check statistics read is needed or not");
   if (!statistics_for_tables_is_needed(thd, tables))
     DBUG_RETURN(0);
 
+  CLOG_STEP("2","open all statistics tables and lock them");
   if (open_stat_tables(thd, stat_tables, &open_tables_backup, FALSE))
   {
     thd->clear_error();
     DBUG_RETURN(1);
   }
 
+  CLOG_STEP("3","read gogo!");
   for (TABLE_LIST *tl= tables; tl; tl= tl->next_global)
   {
     if (!tl->is_view_or_derived() && !is_temporary_table(tl) && tl->table)
@@ -3335,6 +3347,8 @@ int delete_statistics_for_table(THD *thd, const LEX_CSTRING *db, const LEX_CSTRI
   int rc= 0;
 
   DBUG_ENTER("delete_statistics_for_table");
+  CLOG_FUNCTIOND("int delete_statistics_for_table(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *tab)");
+  CLOG_PRINTLN(" Delete statistics on a table from all statistical tables ");
    
   if (open_stat_tables(thd, tables, &open_tables_backup, TRUE))
     DBUG_RETURN(rc);

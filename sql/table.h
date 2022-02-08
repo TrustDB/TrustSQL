@@ -22,6 +22,7 @@
 #include "datadict.h"
 #include "sql_string.h"                         /* String */
 #include "lex_string.h"
+#include "clog.h"
 
 #ifndef MYSQL_CLIENT
 
@@ -55,6 +56,12 @@ class Virtual_column_info;
 class Table_triggers_list;
 class TMP_TABLE_PARAM;
 class SEQUENCE;
+
+#ifdef TRUSTSQL_BUILD
+struct st_tldg_sig_info;
+class Table_trust_options;
+#endif
+
 
 /*
   Used to identify NESTED_JOIN structures within a join (applicable only to
@@ -586,6 +593,11 @@ struct TABLE_SHARE
 {
   TABLE_SHARE() {}                    /* Remove gcc warning */
 
+#ifdef TRUSTSQL_BUILD
+	uint trusted_table_type;    // 0 : Normal 1:Trusted 2:Trusted & Ordered
+	Table_trust_options *trust_options;
+#endif
+
   /** Category of this table. */
   TABLE_CATEGORY table_category;
 
@@ -975,6 +987,10 @@ struct TABLE_SHARE
   */
   int init_from_binary_frm_image(THD *thd, bool write,
                                  const uchar *frm_image, size_t frm_length);
+#ifdef TRUSTSQL_BUILD
+  int init_from_trusted_binary_frm_image(THD *thd, bool write,
+                                 const uchar *frm_image, size_t frm_length, const uchar *tld_image, size_t tld_length);
+#endif
 
   /*
     populates TABLE_SHARE from the table description, specified as the

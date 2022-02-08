@@ -13,11 +13,11 @@
    along with this program; if not, write to the Free Software Foundation,
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
-
 #include "mariadb.h"
 #include <ctype.h>
 #include <string.h>
 #include "sql_bootstrap.h"
+#include "clog.h"
 
 int read_bootstrap_query(char *query, int *query_length,
                          fgets_input_t input, fgets_fn_t fgets_fn, int *error)
@@ -28,11 +28,11 @@ int read_bootstrap_query(char *query, int *query_length,
   size_t query_len= 0;
   int fgets_error= 0;
   *error= 0;
-
+  CLOG_FUNCTIOND("int read_bootstrap_query(char *query, int *query_length,...");
   for ( ; ; )
   {
     line= (*fgets_fn)(line_buffer, sizeof(line_buffer), input, &fgets_error);
-    
+    CLOG_TPRINTLN(" line (%d) = %s",line, line_buffer);
     if (error)
       *error= fgets_error;
 

@@ -26,6 +26,8 @@
   Functions for easy reading of records, possible through a cache
 */
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "records.h"
 #include "sql_priv.h"
@@ -72,6 +74,7 @@ bool init_read_record_idx(READ_RECORD *info, THD *thd, TABLE *table,
 {
   int error= 0;
   DBUG_ENTER("init_read_record_idx");
+  CLOG_FUNCTIOND("bool init_read_record_idx(READ_RECORD *info, THD *thd, TABLE *table,...");
 
   empty_record(table);
   bzero((char*) info,sizeof(*info));
@@ -190,6 +193,7 @@ bool init_read_record(READ_RECORD *info,THD *thd, TABLE *table,
   IO_CACHE *tempfile;
   SORT_ADDON_FIELD *addon_field= filesort ? filesort->addon_field : 0;
   DBUG_ENTER("init_read_record");
+  CLOG_FUNCTIOND("bool init_read_record(READ_RECORD *info,THD *thd, TABLE *table,...");
 
   bzero((char*) info,sizeof(*info));
   info->thd=thd;
@@ -321,6 +325,8 @@ bool init_read_record(READ_RECORD *info,THD *thd, TABLE *table,
 
 void end_read_record(READ_RECORD *info)
 {                   /* free cache if used */
+  CLOG_FUNCTIOND("bool init_read_record(READ_RECORD *info,THD *thd, TABLE *table,...");
+
   if (info->cache)
   {
     my_free_lock(info->cache);

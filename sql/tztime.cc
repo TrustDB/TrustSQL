@@ -29,6 +29,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #if !defined(TZINFO2SQL) && !defined(TESTTIME)
 #include "sql_priv.h"
@@ -1604,6 +1606,7 @@ my_tz_init(THD *org_thd, const char *default_tzname, my_bool bootstrap)
   my_bool return_val= 1;
   int res;
   DBUG_ENTER("my_tz_init");
+  CLOG_FUNCTIOND("my_bool my_tz_init(THD *org_thd, const char *default_tzname, my_bool bootstrap)");
 
 #ifdef HAVE_PSI_INTERFACE
   init_tz_psi_keys();

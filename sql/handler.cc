@@ -19,7 +19,6 @@
     @brief
   Handler-calling-functions
 */
-
 #include "mariadb.h"
 #include <inttypes.h>
 #include "sql_priv.h"
@@ -43,6 +42,8 @@
 #include "debug_sync.h"         // DEBUG_SYNC
 #include "sql_audit.h"
 #include "ha_sequence.h"
+#include "clog.h"
+#include "trustsql_patch.h"
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
 #include "ha_partition.h"
@@ -262,7 +263,9 @@ handler *get_new_handler(TABLE_SHARE *share, MEM_ROOT *alloc,
   handler *file;
   DBUG_ENTER("get_new_handler");
   DBUG_PRINT("enter", ("alloc: %p", alloc));
-
+  CLOG_FUNCTIOND("handler *get_new_handler(TABLE_SHARE *share, MEM_ROOT *alloc,handlerton *db_type)");
+  CLOG_TPRINTLN("handler ton db_type->db_type = %d",(uint)db_type->db_type);
+  
   if (db_type && db_type->state == SHOW_OPTION_YES && db_type->create)
   {
     if ((file= db_type->create(db_type, share, alloc)))
@@ -274,6 +277,7 @@ handler *get_new_handler(TABLE_SHARE *share, MEM_ROOT *alloc,
     Here the call to current_thd() is ok as we call this function a lot of
     times but we enter this branch very seldom.
   */
+  CLOG_TPRINTLN("Try the default table type..");
   file= get_new_handler(share, alloc, ha_default_handlerton(current_thd));
   DBUG_RETURN(file);
 }
@@ -2515,6 +2519,8 @@ int ha_delete_table(THD *thd, handlerton *table_type, const char *path,
   TABLE dummy_table;
   TABLE_SHARE dummy_share;
   DBUG_ENTER("ha_delete_table");
+  CLOG_FUNCTIOND("int ha_delete_table(THD *thd, handlerton *table_type, const char *path,...");
+  CLOG_TPRINTLN("delete a table in the engine");
 
   /* table_type is NULL in ALTER TABLE when renaming only .frm files */
   if (table_type == NULL || table_type == view_pseudo_hton ||
@@ -2673,6 +2679,11 @@ int handler::ha_open(TABLE *table_arg, const char *name, int mode,
              ("name: %s  db_type: %d  db_stat: %d  mode: %d  lock_test: %d",
               name, ht->db_type, table_arg->db_stat, mode,
               test_if_locked));
+  CLOG_FUNCTIOND("int handler::ha_open(TABLE *table_arg, const char *name, int mode,...)");
+  CLOG_TPRINTLN("Open database-handler.");
+  CLOG_TPRINTLN("enter - name: %s  db_type: %d  db_stat: %d  mode: %d  lock_test: %d",
+              name, ht->db_type, table_arg->db_stat, mode,
+              test_if_locked);
 
   table= table_arg;
   DBUG_ASSERT(table->s == table_share);
@@ -3597,6 +3608,8 @@ void handler::print_error(int error, myf errflag)
   bool fatal_error= 0;
   DBUG_ENTER("handler::print_error");
   DBUG_PRINT("enter",("error: %d",error));
+  CLOG_FUNCTIOND("void handler::print_error(int error, myf errflag)");
+  CLOG_TPRINTLN("enter error: %d",error);
 
   if (ha_thd()->transaction_rollback_request)
   {
@@ -4590,6 +4603,9 @@ int
 handler::ha_create(const char *name, TABLE *form, HA_CREATE_INFO *info_arg)
 {
   DBUG_ASSERT(m_lock_type == F_UNLCK);
+  CLOG_FUNCTIOND("int handler::ha_create(const char *name, TABLE *form, HA_CREATE_INFO *info_arg)");
+  CLOG_TPRINTLN("Create a table in the engine: public interface");
+  
   mark_trx_read_write();
   int error= create(name, form, info_arg);
   if (!error &&
@@ -4931,7 +4947,10 @@ int ha_create_table(THD *thd, const char *path,
   bool temp_table __attribute__((unused)) =
     create_info->options & (HA_LEX_CREATE_TMP_TABLE | HA_CREATE_TMP_ALTER);
   DBUG_ENTER("ha_create_table");
+  CLOG_FUNCTIOND("int ha_create_table(...)");
+  CLOG_TPRINTLN("Initiates table-file and calls appropriate database-creator");
 
+  CLOG_STEP("1","init_tmp_table_share(...)");
   init_tmp_table_share(thd, &share, db, 0, table_name, path);
 
   if (frm)
@@ -4942,6 +4961,7 @@ int ha_create_table(THD *thd, const char *path,
     share.frm_image= frm;
 
     // open an frm image
+      CLOG_STEP("2","open an frm image");
     if (share.init_from_binary_frm_image(thd, write_frm_now,
                                          frm->str, frm->length))
       goto err;
@@ -4949,6 +4969,7 @@ int ha_create_table(THD *thd, const char *path,
   else
   {
     // open an frm file
+      CLOG_STEP("2","open an frm file");
     share.db_plugin= ha_lock_engine(thd, create_info->db_type);
 
     if (open_table_def(thd, &share))
@@ -4957,15 +4978,22 @@ int ha_create_table(THD *thd, const char *path,
 
   share.m_psi= PSI_CALL_get_table_share(temp_table, &share);
 
+  CLOG_STEP("3","open table from share");
+
   if (open_table_from_share(thd, &share, &empty_clex_str, 0, READ_ALL, 0,
                             &table, true))
     goto err;
 
+  CLOG_STEP("4","update_create_info_from_table");
   update_create_info_from_table(create_info, &table);
 
+  CLOG_STEP("5","get_canonical_filename");
   name= get_canonical_filename(table.file, share.path.str, name_buff);
+  CLOG_TPRINTLN("name=%s",name);
 
+  CLOG_STEP("6","Create a file");
   error= table.file->ha_create(name, &table, create_info);
+  CLOG_TPRINTLN("=======> create a file result error = %d");
 
   if (unlikely(error))
   {
@@ -4976,12 +5004,101 @@ int ha_create_table(THD *thd, const char *path,
                               share.table_name.str, (uint)share.table_name.length);
   }
 
+  CLOG_STEP("7","closerm");
   (void) closefrm(&table);
  
 err:
   free_table_share(&share);
   DBUG_RETURN(error != 0);
 }
+
+
+#ifdef TRUSTSQL_BUILD
+/**
+  Initiates table-file and calls appropriate database-creator.
+
+  @retval
+   0  ok
+  @retval
+   1  error
+*/
+int ha_create_trusted_table(THD *thd, const char *path,
+                    const char *db, const char *table_name,
+                    HA_CREATE_INFO *create_info, LEX_CUSTRING *frm, LEX_CUSTRING *tld)
+{
+  int error= 1;
+  TABLE table;
+  char name_buff[FN_REFLEN];
+  const char *name;
+  TABLE_SHARE share;
+  bool temp_table __attribute__((unused)) =
+    create_info->options & (HA_LEX_CREATE_TMP_TABLE | HA_CREATE_TMP_ALTER);
+  DBUG_ENTER("ha_create_table");
+  CLOG_FUNCTIOND("int ha_create_trusted_table(...)");
+  CLOG_TPRINTLN("Initiates table-file and calls appropriate database-creator");
+
+  CLOG_STEP("1","init_tmp_table_share(...)");
+  init_tmp_table_share(thd, &share, db, 0, table_name, path);
+
+  if (frm)
+  {
+    bool write_frm_now= !create_info->db_type->discover_table &&
+                        !create_info->tmp_table();
+
+    share.frm_image= frm;
+
+    // open an frm image
+    CLOG_STEP("2","open an frm image");
+    if (share.init_from_trusted_binary_frm_image(thd, write_frm_now,
+                                         frm->str, frm->length, tld->str, tld->length))
+      goto err;
+  }
+  else
+  {
+    // open an frm file
+      CLOG_STEP("2","open an frm file");
+    share.db_plugin= ha_lock_engine(thd, create_info->db_type);
+
+    if (open_table_def(thd, &share))
+      goto err;
+  }
+
+  share.m_psi= PSI_CALL_get_table_share(temp_table, &share);
+
+  CLOG_STEP("3","open table from share");
+
+  if (open_table_from_share(thd, &share, &empty_clex_str, 0, READ_ALL, 0,
+                            &table, true))
+    goto err;
+
+  CLOG_STEP("4","update_create_info_from_table");
+  update_create_info_from_table(create_info, &table);
+
+  CLOG_STEP("5","get_canonical_filename");
+  name= get_canonical_filename(table.file, share.path.str, name_buff);
+  CLOG_TPRINTLN("name=%s",name);
+
+  CLOG_STEP("6","Create a file");
+  error= table.file->ha_create(name, &table, create_info);
+  CLOG_TPRINTLN("=======> create a file result error = %d");
+
+  if (unlikely(error))
+  {
+    if (!thd->is_error())
+      my_error(ER_CANT_CREATE_TABLE, MYF(0), db, table_name, error);
+    table.file->print_error(error, MYF(ME_JUST_WARNING));
+    PSI_CALL_drop_table_share(temp_table, share.db.str, (uint)share.db.length,
+                              share.table_name.str, (uint)share.table_name.length);
+  }
+
+  CLOG_STEP("7","closerm");
+  (void) closefrm(&table);
+
+err:
+  free_table_share(&share);
+  DBUG_RETURN(error != 0);
+}
+#endif
 
 void st_ha_check_opt::init()
 {
@@ -5275,6 +5392,8 @@ bool ha_table_exists(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *table_n
   handlerton *dummy;
   bool dummy2;
   DBUG_ENTER("ha_table_exists");
+  CLOG_FUNCTIOND("bool ha_table_exists(...");
+  CLOG_PRINTLN("Check if a given table exists, without doing a full discover, if possible");
 
   if (hton)
     *hton= 0;
@@ -6229,14 +6348,18 @@ int handler::ha_write_row(uchar *buf)
               m_lock_type == F_WRLCK);
   DBUG_ENTER("handler::ha_write_row");
   DEBUG_SYNC_C("ha_write_row_start");
+  CLOG_FUNCTIOND("int handler::ha_write_row(uchar *buf)");
 
+  CLOG_STEP("1","MYSQL_INSERT_ROW_START");
   MYSQL_INSERT_ROW_START(table_share->db.str, table_share->table_name.str);
   mark_trx_read_write();
   increment_statistics(&SSV::ha_write_count);
 
+  CLOG_STEP("2","write_row & then IO_WAIT");
   TABLE_IO_WAIT(tracker, m_psi, PSI_TABLE_WRITE_ROW, MAX_KEY, 0,
                       { error= write_row(buf); })
 
+  CLOG_STEP("3","MYSQL_INSERT_ROW_DONE");
   MYSQL_INSERT_ROW_DONE(error);
   if (likely(!error) && !row_already_logged)
   {
@@ -6781,6 +6904,8 @@ int del_global_index_stats_for_table(THD *thd, uchar* cache_key, size_t cache_ke
 {
   int res = 0;
   DBUG_ENTER("del_global_index_stats_for_table");
+  CLOG_FUNCTIOND("static int del_global_index_stats_for_table(THD *thd, uchar* cache_key, size_t cache_key_length)");
+  CLOG_PRINTLN("Remove all indexes for a given table from global index statics");
 
   mysql_mutex_lock(&LOCK_global_index_stats);
 
@@ -6820,11 +6945,13 @@ int del_global_table_stat(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *ta
   uchar *cache_key;
   size_t cache_key_length;
   DBUG_ENTER("del_global_table_stat");
+  CLOG_FUNCTIOND("int del_global_table_stat(THD *thd, const LEX_CSTRING *db, const LEX_CSTRING *table)");
+  CLOG_PRINTLN("Remove a table from global table statistics");
 
   cache_key_length= db->length + 1 + table->length + 1;
 
   if(!(cache_key= (uchar *)my_malloc(cache_key_length,
-                                     MYF(MY_WME | MY_ZEROFILL))))
+                                 MYF(MY_WME | MY_ZEROFILL))))
   {
     /* Out of memory error already given */
     res = 1;

@@ -32,6 +32,8 @@
 #include "sp.h"                       // enum stored_procedure_type
 #include "sql_tvc.h"
 #include "item.h"
+#include "clog.h"
+#include "trustsql_patch.h"
 
 /* Used for flags of nesting constructs */
 #define SELECT_NESTING_MAP_SIZE 64
@@ -214,6 +216,11 @@ class Item_window_func;
 struct sql_digest_state;
 class With_clause;
 class my_var;
+
+#ifdef TRUSTSQL_BUILD
+class LEX_trust_options;
+struct LEX_sig_field_info;
+#endif
 
 #define ALLOC_ROOT_SET 1024
 
@@ -2802,6 +2809,12 @@ class Query_arena_memroot;
 
 struct LEX: public Query_tables_list
 {
+
+#ifdef TRUSTSQL_BUILD
+	LEX_trust_options 	*trust_options;
+	LEX_sig_field_info	*lex_sig_field_info;
+#endif
+
   SELECT_LEX_UNIT unit;                         /* most upper unit */
   SELECT_LEX select_lex;                        /* first SELECT_LEX */
   /* current SELECT_LEX in parsing */
@@ -3900,8 +3913,16 @@ public:
                    uint scope,
                    DDL_options_st options)
   {
+	/* TRUSTED LEDGER */
+#ifdef TRUSTSQL_BUILD
+	if ((scope == HA_LEX_CREATE_TRUSTED_TABLE) | (scope == HA_LEX_CREATE_TRUSTED_ORDERED_TABLE) ) {
+		DDL_options_st::Options other;
+		other = (DDL_options_st::Options) scope;
+		options.add(other);
+	}	
+#endif
     set_command(command, options);
-    create_info.options|= scope; // HA_LEX_CREATE_TMP_TABLE or 0
+   	create_info.options|= scope; // HA_LEX_CREATE_TMP_TABLE or 0
   }
   bool check_create_options(DDL_options_st options)
   {

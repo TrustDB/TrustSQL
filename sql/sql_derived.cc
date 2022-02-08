@@ -20,8 +20,6 @@
   Derived tables
   These were introduced by Sinisa <sinisa@mysql.com>
 */
-
-
 #include "mariadb.h"                         /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "unireg.h"
@@ -32,6 +30,7 @@
 #include "sql_acl.h"                          // SELECT_ACL
 #include "sql_class.h"
 #include "sql_cte.h"
+#include "clog.h"
 
 typedef bool (*dt_processor)(THD *thd, LEX *lex, TABLE_LIST *derived);
 
@@ -73,6 +72,9 @@ mysql_handle_derived(LEX *lex, uint phases)
   THD *thd= lex->thd;
   DBUG_ENTER("mysql_handle_derived");
   DBUG_PRINT("enter", ("phases: 0x%x", phases));
+  CLOG_FUNCTIOND("bool mysql_handle_derived(LEX *lex, uint phases)");
+  CLOG_TPRINTLN("Run specified phases on all derived tables/views in given LEX.");
+  
   if (!lex->derived_tables)
     DBUG_RETURN(FALSE);
 

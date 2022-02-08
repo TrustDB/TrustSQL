@@ -20,7 +20,6 @@
 
   Multi-table deletes were introduced by Monty and Sinisa
 */
-
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
@@ -44,6 +43,7 @@
 #include "sql_derived.h"                        // mysql_handle_list_of_derived
                                                 // end_read_record
 #include "sql_partition.h"       // make_used_partitions_str
+#include "clog.h"
 
 #define MEM_STRIP_BUF_SIZE ((size_t) thd->variables.sortbuff_size)
 
@@ -301,12 +301,22 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
   bool delete_record, delete_while_scanning;
   DBUG_ENTER("mysql_delete");
 
+  CLOG_FUNCTIOND("bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,...");
+  	
   query_plan.index= MAX_KEY;
   query_plan.using_filesort= FALSE;
 
   create_explain_query(thd->lex, thd->mem_root);
   if (open_and_lock_tables(thd, table_list, TRUE, 0))
     DBUG_RETURN(TRUE);
+
+#ifdef TRUSTSQL_BUILD
+	if(table_list->table->s->trusted_table_type!=0) {
+	  my_error(ER_NON_UPDATABLE_TABLE, MYF(0), table_list->alias.str, "(TRUSTED TABLE) DELETE");
+	  DBUG_RETURN(TRUE);
+	 }
+#endif
+
 
   THD_STAGE_INFO(thd, stage_init_update);
 

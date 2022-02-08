@@ -333,10 +333,19 @@ int mysql_update(THD *thd,
   ha_rows updated_sys_ver= 0;
 
   DBUG_ENTER("mysql_update");
+  CLOG_FUNCTIOND("int mysql_update(THD *thd,TABLE_LIST *table_list,List<Item> &fields,...");
+  CLOG_PRINTLN("Process usual UPDATE");
 
   create_explain_query(thd->lex, thd->mem_root);
   if (open_tables(thd, &table_list, &table_count, 0))
     DBUG_RETURN(1);
+  
+#ifdef TRUSTSQL_BUILD
+  if(table_list->table->s->trusted_table_type!=0) {
+  	my_error(ER_NON_UPDATABLE_TABLE, MYF(0), table_list->alias.str, "(TRUSTED TABLE) UPDATE");
+  	DBUG_RETURN(1);
+   }
+#endif
 
   /* Prepare views so they are handled correctly */
   if (mysql_handle_derived(thd->lex, DT_INIT))

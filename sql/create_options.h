@@ -105,4 +105,5 @@ bool engine_options_differ(void *old_struct, void *new_struct,
                            ha_create_table_option *rules);
 bool is_engine_option_known(engine_option_value *opt,
                             ha_create_table_option *rules);
+
 #endif

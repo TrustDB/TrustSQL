@@ -108,6 +108,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "key.h"        // is_key_used, key_copy, key_cmp, key_restore
@@ -1170,6 +1172,8 @@ SQL_SELECT *make_select(TABLE *head, table_map const_tables,
 {
   SQL_SELECT *select;
   DBUG_ENTER("make_select");
+  CLOG_FUNCTIOND("SQL_SELECT *make_select(TABLE *head, table_map const_tables,...)");
+  CLOG_TPRINTLN("make a select from mysql info");
 
   *error=0;
 

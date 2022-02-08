@@ -45,6 +45,7 @@
 #include <m_ctype.h>				// For test_if_number
 
 #include <set_var.h> // for Sys_last_gtid_ptr
+#include "clog.h"
 
 #ifdef _WIN32
 #include "message.h"
@@ -8564,6 +8565,7 @@ static bool test_if_number(const char *str, ulong *res, bool allow_wildcards)
 
 void sql_perror(const char *message)
 {
+	CLOG_FUNCTIOND("void sql_perror(const char *message)");
 #if defined(_WIN32)
   char* buf;
   DWORD dw= GetLastError();
@@ -8580,6 +8582,7 @@ void sql_perror(const char *message)
   }
 #elif defined(HAVE_STRERROR)
   sql_print_error("%s: %s",message, strerror(errno));
+  CLOG_TPRINTLN("%s: %s",message, strerror(errno));
 #else 
   perror(message);
 #endif

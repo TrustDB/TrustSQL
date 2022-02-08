@@ -502,6 +502,7 @@ bool trans_rollback_implicit(THD *thd)
 bool trans_commit_stmt(THD *thd)
 {
   DBUG_ENTER("trans_commit_stmt");
+  CLOG_FUNCTIOND("Commit the single statement transaction.");
   int res= FALSE;
   /*
     We currently don't invoke commit/rollback at end of

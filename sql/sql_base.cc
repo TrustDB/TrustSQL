@@ -16,7 +16,6 @@
 
 
 /* Basic functions needed by many modules */
-
 #include "mariadb.h"
 #include "sql_base.h"                           // setup_table_map
 #include "sql_priv.h"
@@ -58,6 +57,8 @@
 #include "datadict.h"   // dd_frm_is_view()
 #include "sql_hset.h"   // Hash_set
 #include "rpl_rli.h"   // rpl_group_info
+
+#include "clog.h"
 #ifdef  __WIN__
 #include <io.h>
 #endif
@@ -198,6 +199,10 @@ uint get_table_def_key(const TABLE_LIST *table_list, const char **key)
     is properly initialized, so table definition cache can be produced
     from key used by MDL subsystem.
   */
+  CLOG_FUNCTIOND("uint get_table_def_key(const TABLE_LIST *table_list, const char **key)");
+  CLOG_TPRINTLN("Get table chache key for a table list element");
+  CLOG_TPRINTLN(" db_name = %s, table_name = %s",table_list->get_db_name(),table_list->get_db_name());
+  CLOG_TPRINTLN(" key.db_name = %s, key.name = %s",table_list->mdl_request.key.db_name(),table_list->mdl_request.key.name());
   DBUG_ASSERT(!strcmp(table_list->get_db_name(),
                       table_list->mdl_request.key.db_name()));
   DBUG_ASSERT(!strcmp(table_list->get_table_name(),
@@ -716,6 +721,8 @@ void close_thread_tables(THD *thd)
 {
   TABLE *table;
   DBUG_ENTER("close_thread_tables");
+  CLOG_FUNCTIOND("void close_thread_tables(THD *thd)");
+  CLOG_PRINTLN("Close all tables used by the current substatement, ...");
 
   THD_STAGE_INFO(thd, stage_closing_tables);
 
@@ -865,6 +872,11 @@ void close_thread_table(THD *thd, TABLE **table_ptr)
   DBUG_ENTER("close_thread_table");
   DBUG_PRINT("tcache", ("table: '%s'.'%s' %p", table->s->db.str,
                         table->s->table_name.str, table));
+  CLOG_FUNCTIOND("void close_thread_table(THD *thd, TABLE **table_ptr)");
+  CLOG_PRINTLN("move one table to free list");
+  CLOG_TPRINTLN("table: '%s'.'%s' %p", table->s->db.str,
+						  table->s->table_name.str, table);
+  
   DBUG_ASSERT(!table->file->keyread_enabled());
   DBUG_ASSERT(!table->file || table->file->inited == handler::NONE);
 
@@ -989,6 +1001,8 @@ TABLE_LIST* find_dup_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
   LEX_CSTRING *d_name, *t_name, *t_alias;
   DBUG_ENTER("find_dup_table");
   DBUG_PRINT("enter", ("table alias: %s", table->alias.str));
+  CLOG_FUNCTIOND("static TABLE_LIST* find_dup_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,..)");
+  CLOG_TPRINTLN("enter - table alias: %s", table->alias.str);
 
   /*
     If this function called for query which update table (INSERT/UPDATE/...)
@@ -1018,6 +1032,7 @@ TABLE_LIST* find_dup_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
 
 retry:
   DBUG_PRINT("info", ("real table: %s.%s", d_name->str, t_name->str));
+  CLOG_TPRINTLN("info - real table: %s.%s", d_name->str, t_name->str);
   for (TABLE_LIST *tl= table_list; tl ; tl= tl->next_global, res= 0)
   {
     if (tl->select_lex && tl->select_lex->master_unit() &&
@@ -1120,7 +1135,7 @@ unique_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
              uint check_flag)
 {
   TABLE_LIST *dup;
-
+  CLOG_FUNCTIOND("TABLE_LIST* unique_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,..");
   table= table->find_table_for_update();
 
   if (table->table &&
@@ -1394,6 +1409,8 @@ open_table_get_mdl_lock(THD *thd, Open_table_context *ot_ctx,
                         uint flags,
                         MDL_ticket **mdl_ticket)
 {
+  CLOG_FUNCTIOND("static bool open_table_get_mdl_lock(THD *thd, Open_table_context *ot_ctx...)");
+  CLOG_TPRINTLN("Try to acquire an MDL lock for a table being opened...");
   MDL_request mdl_request_shared;
 
   if (flags & (MYSQL_OPEN_FORCE_SHARED_MDL |
@@ -1418,6 +1435,7 @@ open_table_get_mdl_lock(THD *thd, Open_table_context *ot_ctx,
 
       These two flags are mutually exclusive.
     */
+    CLOG_TPRINTLN("MYSQL_OPEN_FORCE_SHARED_MDL | MYSQL_OPEN_FORCE_SHARED_HIGH_PRIO_MDL");
     DBUG_ASSERT(!(flags & MYSQL_OPEN_FORCE_SHARED_MDL) ||
                 !(flags & MYSQL_OPEN_FORCE_SHARED_HIGH_PRIO_MDL));
 
@@ -1441,6 +1459,7 @@ open_table_get_mdl_lock(THD *thd, Open_table_context *ot_ctx,
       To avoid such situation we skip the trouble-making table if
       there is a conflicting lock.
     */
+    CLOG_TPRINTLN("MYSQL_OPEN_FAIL_ON_MDL_CONFLICT");
     if (thd->mdl_context.try_acquire_lock(mdl_request))
       return TRUE;
     if (mdl_request->ticket == NULL)
@@ -1475,6 +1494,7 @@ open_table_get_mdl_lock(THD *thd, Open_table_context *ot_ctx,
          Such circular waits are currently only resolved by timeouts,
          e.g. @@innodb_lock_wait_timeout or @@lock_wait_timeout.
     */
+    CLOG_TPRINTLN("We are doing a normal table open. Let us try to acuire a metadata lock on the table.");
     MDL_deadlock_handler mdl_deadlock_handler(ot_ctx);
 
     thd->push_internal_handler(&mdl_deadlock_handler);
@@ -1606,7 +1626,8 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
   int part_names_error=0;
 #endif
   DBUG_ENTER("open_table");
-
+  CLOG_FUNCTIOND("bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)");
+  
   /*
     The table must not be opened already. The table can be pre-opened for
     some statements if it is a temporary table.
@@ -1616,6 +1637,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
   DBUG_ASSERT(!table_list->table);
 
   /* an open table operation needs a lot of the stack space */
+  CLOG_STEP("1","CHECK! AN OPEN TABLE OPERATION NEEDS A LOT OF THE STACK SPACE");
   if (check_stack_overrun(thd, STACK_MIN_SIZE_FOR_OPEN, (uchar *)&alias))
     DBUG_RETURN(TRUE);
 
@@ -1631,6 +1653,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
     Note that we allow write locks on log tables as otherwise logging
     to general/slow log would be disabled in read only transactions.
   */
+  CLOG_STEP("2","Check if we're trying to take a write lock in a read only transaction.");
   if (table_list->mdl_request.is_write_lock_request() &&
       thd->tx_read_only &&
       !(flags & (MYSQL_LOCK_LOG_TABLE | MYSQL_OPEN_HAS_MDL_LOCK)))
@@ -1646,7 +1669,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
   }
 
   key_length= get_table_def_key(table_list, &key);
-
+  CLOG_TPRINTLN("key_length = 0x%08X(%d)",key_length,key_length);
   /*
     If we're in pre-locked or LOCK TABLES mode, let's try to find the
     requested table in the list of pre-opened and locked tables. If the
@@ -1654,6 +1677,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
     tables in pre-locked/LOCK TABLES mode.
     TODO: move this block into a separate function.
   */
+  CLOG_STEP("3","If we're in re-locked or LOCK TABLES mode, et's try to find the request table in the list of pre-opend and locked tables.");
   if (thd->locked_tables_mode &&
       ! (flags & MYSQL_OPEN_GET_NEW_TABLE))
   {						// Using table locks
@@ -1697,6 +1721,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
                 between calling statement and SP/trigger is done in
                 lock_tables().
               */
+              CLOG_TPRINTLN("We have found a perfect match!!");
               break;
             }
           }
@@ -1708,6 +1733,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
       table= best_table;
       table->query_id= thd->query_id;
       DBUG_PRINT("info",("Using locked table"));
+	  CLOG_TPRINTLN("info - Using locked table");
 #ifdef WITH_PARTITION_STORAGE_ENGINE
       part_names_error= set_partitions_as_used(table_list, table);
 #endif
@@ -1760,6 +1786,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
             pre-acquiring metadata locks at the beggining of
             open_tables() call.
     */
+    CLOG_STEP("4","Non pre-locked/LOCK Tables mode");
     if (table_list->mdl_request.is_write_lock_request() &&
         ! (flags & (MYSQL_OPEN_IGNORE_GLOBAL_READ_LOCK |
                     MYSQL_OPEN_FORCE_SHARED_MDL |
@@ -1790,7 +1817,6 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
 
       ot_ctx->set_has_protection_against_grl();
     }
-
     if (open_table_get_mdl_lock(thd, ot_ctx, &table_list->mdl_request,
                                 flags, &mdl_ticket) ||
         mdl_ticket == NULL)
@@ -1827,6 +1853,7 @@ bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx)
     gts_flags= GTS_TABLE | GTS_VIEW;
 
 retry_share:
+  CLOG_STEP("5","retry_share:");
 
   share= tdc_acquire_share(thd, table_list, gts_flags, &table);
 
@@ -3398,13 +3425,15 @@ open_and_process_table(THD *thd, LEX *lex, TABLE_LIST *tables,
   bool safe_to_ignore_table= FALSE;
   DBUG_ENTER("open_and_process_table");
   DEBUG_SYNC(thd, "open_and_process_table");
-
+  CLOG_FUNCTIOND("static bool open_and_process_table(THD *thd, LEX *lex, TABLE_LIST *tables...");
+  CLOG_TPRINTLN("Handle table list element by obtaining metadata lock, opening table or view and...");
   /*
     Ignore placeholders for derived tables. After derived tables
     processing, link to created temporary table will be put here.
     If this is derived table for view then we still want to process
     routines used by this view.
   */
+  CLOG_STEP("1","Ignore placeholders for derived tables. ...");
   if (tables->derived)
   {
     if (!tables->view)
@@ -3453,6 +3482,7 @@ open_and_process_table(THD *thd, LEX *lex, TABLE_LIST *tables,
     table in the query. Do not fill it yet - will be filled during
     execution.
   */
+  CLOG_STEP("2","If this TABLELIST object is a placeholder for an information_schema table, create a tempoary table...");
   if (tables->schema_table)
   {
     /*
@@ -3460,6 +3490,7 @@ open_and_process_table(THD *thd, LEX *lex, TABLE_LIST *tables,
       view, ignore it for now -- it will be filled when its respective
       TABLE_LIST is processed. This code works only during re-execution.
     */
+    CLOG_STEP("2-1","If this Information_schema table is merged into a mergerable view, ....");
     if (tables->view)
     {
       MDL_ticket *mdl_ticket;
@@ -3798,11 +3829,16 @@ lock_table_names(THD *thd, const DDL_options_st &options,
   Dummy_error_handler error_handler;
   DBUG_ENTER("lock_table_names");
 
+  CLOG_FUNCTIOND("bool lock_table_names(...)");
+  CLOG_TPRINTLN("Acquire upgradable (SNW, SNRW) metadata locks on tables used by LOCK TABLES or by a DDL statement.");
+  
   DBUG_ASSERT(!thd->locked_tables_mode);
 
+  CLOG_STEP("1","Check all tables it needs lock(read_only)");
   for (table= tables_start; table && table != tables_end;
        table= table->next_global)
   {
+    CLOG_TPRINTLN("for( tables_start ~ tables_end)  table.name = %s table.schema.name = %s",table->table_name.str,table->schema_table_name.str);
     if (table->mdl_request.type < MDL_SHARED_UPGRADABLE ||
         table->mdl_request.type == MDL_SHARED_READ_ONLY ||
         table->open_type == OT_TEMPORARY_ONLY ||
@@ -3812,6 +3848,7 @@ lock_table_names(THD *thd, const DDL_options_st &options,
     }
 
     /* Write lock on normal tables is not allowed in a read only transaction. */
+	CLOG_STEP("1-1","Write lock on normal tables is not allowed in a read only transaction");
     if (thd->tx_read_only)
     {
       my_error(ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION, MYF(0));
@@ -3819,6 +3856,7 @@ lock_table_names(THD *thd, const DDL_options_st &options,
     }
 
     /* Scoped locks: Take intention exclusive locks on all involved schemas. */
+	CLOG_STEP("1-2","Scoped locks:Take intention exclusive locks on all invloved schemas");
     if (!(flags & MYSQL_OPEN_SKIP_SCOPED_MDL_LOCK))
     {
       MDL_request *schema_request= new (thd->mem_root) MDL_request;
@@ -4022,8 +4060,18 @@ bool open_tables(THD *thd, const DDL_options_st &options,
   bool some_routine_modifies_data= FALSE;
   bool has_prelocking_list;
   DBUG_ENTER("open_tables");
+  CLOG_PRINTLN("===============================================================");	
+  CLOG_FUNCTIOND("bool open_tables(THD *thd, const DDL_options_st &options,...");
+  CLOG_PRINTLN("---------------------------------------------------------------");	
+  table_to_open= start;
+  for (tables= *start; tables && tables != thd->lex->first_not_own_table(); tables= tables->next_global)
+  {
+  	CLOG_TPRINTLN("Table name = %s",tables->table_name.str);
+  }		
+  CLOG_PRINTLN("===============================================================");	
 
   /* Accessing data in XA_IDLE or XA_PREPARED is not allowed. */
+  CLOG_STEP("1","Accessing data in XA_IDLE or XA_PREPARED is not allowed");
   enum xa_states xa_state= thd->transaction.xid_state.xa_state;
   if (*start && (xa_state == XA_IDLE || xa_state == XA_PREPARED))
   {
@@ -4041,6 +4089,7 @@ restart:
     the current session (i.e. to avoid having a DDL blocked by HANDLERs
     opened for a long time).
   */
+  CLOG_STEP("2","RESTART:   ");
   if (thd->handler_tables_hash.records)
     mysql_ha_flush(thd);
 
@@ -4064,6 +4113,7 @@ restart:
     lock will be reused (thanks to the fact that in recursive case
     metadata locks are acquired without waiting).
   */
+  CLOG_STEP("1","If we executing LOCK TABLES statement or a DDL statement...");
   if (! (flags & (MYSQL_OPEN_HAS_MDL_LOCK |
                   MYSQL_OPEN_FORCE_SHARED_MDL |
                   MYSQL_OPEN_FORCE_SHARED_HIGH_PRIO_MDL)))
@@ -4095,6 +4145,7 @@ restart:
       for (table= *start; table && table != thd->lex->first_not_own_table();
            table= table->next_global)
       {
+    	CLOG_TPRINTLN("table name = %s",table->table_name.str);
         if (table->mdl_request.type >= MDL_SHARED_UPGRADABLE)
           table->mdl_request.ticket= NULL;
       }
@@ -4105,18 +4156,22 @@ restart:
     Perform steps of prelocking algorithm until there are unprocessed
     elements in prelocking list/set.
   */
+  CLOG_STEP("2","Perform steps of prelocking alogrithm until there are unprocessed lements in prelocking list/set");
   while (*table_to_open  ||
          (thd->locked_tables_mode <= LTM_LOCK_TABLES &&
           *sroutine_to_open))
   {
     /*
       For every table in the list of tables to open, try to find or open
-      a table.
+      a table.      
     */
-    for (tables= *table_to_open; tables;
+    CLOG_STEP("2-1","while ~   For every table in t8he list of tables to open, try to find or open a table");
+     for (tables= *table_to_open; tables;
          table_to_open= &tables->next_global, tables= tables->next_global)
     {
-      error= open_and_process_table(thd, thd->lex, tables, counter,
+      CLOG_STEP("2-1-1","for ~. Open and process table");
+	  CLOG_TPRINTLN("tabe_name = %s",tables->table_name);	
+	  error= open_and_process_table(thd, thd->lex, tables, counter,
                                     flags, prelocking_strategy,
                                     has_prelocking_list, &ot_ctx);
 
@@ -4181,6 +4236,7 @@ restart:
         if prelocking strategy prescribes so, add tables it uses to the
         table list and routines it might invoke to the prelocking set.
       */
+      CLOG_STEP("2-2","Process elements of the prelocking set which are present there since parsing stage or were added to  it...");
       for (Sroutine_hash_entry *rt= *sroutine_to_open; rt;
            sroutine_to_open= &rt->next, rt= rt->next)
       {
@@ -4241,12 +4297,13 @@ restart:
 
     And start wsrep TOI if needed.
   */
+  CLOG_STEP("2-3","After successful open of all tables, including MERGE parents and children, attach the children to...");
   for (tables= *start; tables; tables= tables->next_global)
   {
     TABLE *tbl= tables->table;
-
     if (!tbl)
       continue;
+    CLOG_TPRINTLN("for( tables->next_global..)   tbl->s->db_name= %s tbl->s->table_name= %s ",tbl->s->db.str,tbl->s->table_name.str);
 
     /* Schema tables may not have a TABLE object here. */
     if (tbl->file->ha_table_flags() & HA_CAN_MULTISTEP_MERGE)
@@ -4736,6 +4793,8 @@ static bool check_lock_and_start_stmt(THD *thd,
   int error;
   thr_lock_type lock_type;
   DBUG_ENTER("check_lock_and_start_stmt");
+  CLOG_FUNCTIOND("static bool check_lock_and_start_stmt(THD *thd,...)");
+  CLOG_TPRINTLN("Check that lock is ok for tables; Call start stmt if ok");
 
   /*
     Prelocking placeholder is not set for TABLE_LIST that
@@ -4768,6 +4827,7 @@ static bool check_lock_and_start_stmt(THD *thd,
              table_list->table->alias.c_ptr());
     DBUG_RETURN(1);
   }
+  CLOG_TPRINTLN("!!!  table_list->table->file->start_stmt(...)");
   if (unlikely((error= table_list->table->file->start_stmt(thd, lock_type))))
   {
     table_list->table->file->print_error(error, MYF(0));
@@ -4992,7 +5052,10 @@ bool open_and_lock_tables(THD *thd, const DDL_options_st &options,
   MDL_savepoint mdl_savepoint= thd->mdl_context.mdl_savepoint();
   DBUG_ENTER("open_and_lock_tables");
   DBUG_PRINT("enter", ("derived handling: %d", derived));
-
+  CLOG_FUNCTIOND("bool open_and_lock_tables(...)");
+  CLOG_TPRINTLN("Open all tables in list, locks them and optionally process derived tables.");
+  
+  CLOG_STEP("1","open_tables()"); 
   if (open_tables(thd, options, &tables, &counter, flags, prelocking_strategy))
     goto err;
 
@@ -5002,6 +5065,7 @@ bool open_and_lock_tables(THD *thd, const DDL_options_st &options,
                   my_sleep(6000000);
                   thd->proc_info= old_proc_info;});
 
+  CLOG_STEP("2","lock_tables()"); 
   if (lock_tables(thd, tables, counter, flags))
     goto err;
 
@@ -5055,6 +5119,9 @@ bool open_normal_and_derived_tables(THD *thd, TABLE_LIST *tables, uint flags,
   uint counter;
   MDL_savepoint mdl_savepoint= thd->mdl_context.mdl_savepoint();
   DBUG_ENTER("open_normal_and_derived_tables");
+  CLOG_FUNCTIOND("bool open_normal_and_derived_tables(THD *thd, TABLE_LIST *tables, uint flags..");
+  CLOG_TPRINTLN("  Open all tables in list and process derived tables");
+  	
   DBUG_ASSERT(!thd->fill_derived_tables());
   if (open_tables(thd, &tables, &counter, flags, &prelocking_strategy) ||
       mysql_handle_derived(thd->lex, dt_phases))
@@ -5097,6 +5164,8 @@ bool open_tables_only_view_structure(THD *thd, TABLE_LIST *table_list,
                                      bool can_deadlock)
 {
   DBUG_ENTER("open_tables_only_view_structure");
+  CLOG_FUNCTIOND("bool open_tables_only_view_structure(THD *thd, TABLE_LIST *table_list,..");
+  CLOG_TPRINTLN("Open a table to read its structure, e.g. for:..");
   /*
     Let us set fake sql_command so views won't try to merge
     themselves into main statement. If we don't do this,
@@ -5222,6 +5291,8 @@ bool lock_tables(THD *thd, TABLE_LIST *tables, uint count,
 {
   TABLE_LIST *table;
   DBUG_ENTER("lock_tables");
+  CLOG_FUNCTIOND("bool lock_tables(THD *thd, TABLE_LIST *tables, uint count,...)");
+  CLOG_TPRINTLN("Lock all tables in a list");
   /*
     We can't meet statement requiring prelocking if we already
     in prelocked mode.
@@ -6094,6 +6165,9 @@ find_field_in_tables(THD *thd, Item_ident *item,
   TABLE_LIST *cur_table= first_table;
   TABLE_LIST *actual_table;
   bool allow_rowid;
+
+  CLOG_FUNCTIOND("Field *find_field_in_tables(THD *thd, Item_ident *item,...)");
+  CLOG_TPRINTLN("Find field in table list.");
 
   if (!table_name || !table_name[0])
   {
@@ -7199,6 +7273,8 @@ static bool setup_natural_join_row_types(THD *thd,
                                          Name_resolution_context *context)
 {
   DBUG_ENTER("setup_natural_join_row_types");
+  CLOG_FUNCTIOND("static bool setup_natural_join_row_types(THD *thd,...)");
+  CLOG_TPRINTLN("Compute and store the row types of the top-most NATURAL/USING joins in a FROM clause.");
   thd->where= "from clause";
   if (from_clause->elements == 0)
     DBUG_RETURN(false); /* We come here in the case of UNIONs. */
@@ -7368,9 +7444,13 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
   bool make_pre_fix= (pre_fix && (pre_fix->elements == 0));
   DBUG_ENTER("setup_fields");
   DBUG_PRINT("enter", ("ref_pointer_array: %p", ref_pointer_array.array()));
+  CLOG_FUNCTIOND("bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array...)");
+  CLOG_TPRINTLN("Check that all given fields exists and fill struct with current data");
 
   thd->column_usage= column_usage;
   DBUG_PRINT("info", ("thd->column_usage: %d", thd->column_usage));
+  CLOG_TPRINTLN("info - thd->column_usage: %d", thd->column_usage);
+  
   if (allow_sum_func)
     thd->lex->allow_sum_func.set_bit(thd->lex->current_select->nest_level);
   thd->where= THD::DEFAULT_WHERE;
@@ -7416,7 +7496,7 @@ bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
   {
     if (make_pre_fix)
       pre_fix->push_back(item, thd->stmt_arena->mem_root);
-
+    CLOG_TPRINTLN("ITEM NAME  = %s",item->name.str);
     if (item->fix_fields_if_needed_for_scalar(thd, it.ref()))
     {
       thd->lex->current_select->is_item_list_lookup= save_is_item_list_lookup;
@@ -7473,8 +7553,13 @@ void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,
                       bool full_table_list, TABLE_LIST *boundary)
  
 {
+  CLOG_FUNCTIOND("void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,...)");
+  CLOG_TPRINTLN("make list of leaves of join table tree");
+
+  CLOG_STEP("1","for (TABLE_LIST *table ~ table=table->next_local)");
   for (TABLE_LIST *table= tables; table; table= table->next_local)
   {
+    CLOG_TPRINTLN("Table name = %s",table->table_name.str);
     if (table == boundary)
       full_table_list= !full_table_list;
     if (full_table_list && table->is_merged_derived())
@@ -7490,6 +7575,7 @@ void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,
     }
     else
     {
+      CLOG_TPRINTLN("list.push_back()");
       list.push_back(table, thd->mem_root);
     }
   }
@@ -7534,6 +7620,8 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
   TABLE_LIST *table_list;
 
   DBUG_ENTER("setup_tables");
+  CLOG_FUNCTIOND("bool setup_tables(THD *thd, Name_resolution_context *context,...)");
+  CLOG_TPRINTLN("prepare tables");
 
   DBUG_ASSERT ((select_insert && !tables->next_name_resolution_table) || !tables || 
                (context->table_list && context->first_name_resolution_table));
@@ -7551,6 +7639,7 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
     leaves.empty();
     if (select_lex->prep_leaf_list_state != SELECT_LEX::SAVED)
     {
+      CLOG_STEP("1","make_leaves_list");
       make_leaves_list(thd, leaves, tables, full_table_list, first_select_table);
       select_lex->prep_leaf_list_state= SELECT_LEX::READY;
       select_lex->leaf_tables_exec.empty();
@@ -7561,12 +7650,15 @@ bool setup_tables(THD *thd, Name_resolution_context *context,
       while ((table_list= ti++))
         leaves.push_back(table_list, thd->mem_root);
     }
-      
+
     while ((table_list= ti++))
     {
       TABLE *table= table_list->table;
-      if (table)
+      CLOG_STEP("2","while((table_list=ti++))");      	  
+      if (table) {
         table->pos_in_table_list= table_list;
+		CLOG_TPRINTLN("table = %s",table->s->table_name.str); 
+      }
       if (first_select_table &&
           table_list->top_table() == first_select_table)
       {
@@ -7690,7 +7782,10 @@ bool setup_tables_and_check_access(THD *thd,
                                    bool full_table_list)
 {
   DBUG_ENTER("setup_tables_and_check_access");
+  CLOG_FUNCTIOND("bool setup_tables_and_check_access(THD *thd, ...)");
+  CLOG_TPRINTLN("prepare tables and check access for the view tables");
 
+  CLOG_STEP("1","setup tables!");
   if (setup_tables(thd, context, from_clause, tables,
                    leaves, select_insert, full_table_list))
     DBUG_RETURN(TRUE);
@@ -7698,6 +7793,7 @@ bool setup_tables_and_check_access(THD *thd,
   List_iterator<TABLE_LIST> ti(leaves);
   TABLE_LIST *table_list;
   ulong access= want_access_first;
+  CLOG_STEP("2","check single table access - all list");
   while ((table_list= ti++))
   {
     if (table_list->belong_to_view && !table_list->view && 
@@ -8236,6 +8332,7 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
   bool save_abort_on_warning= thd->abort_on_warning;
   bool save_no_errors= thd->no_errors;
   DBUG_ENTER("fill_record");
+  CLOG_FUNCTIOND("bool fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,...");
 
   thd->no_errors= ignore_errors;
   /*
@@ -8245,6 +8342,8 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
   if (fields.elements)
     table_arg->auto_increment_field_not_null= FALSE;
 
+  CLOG_TPRINTLN("fields.elements = %d",fields.elements);
+  
   while ((fld= f++))
   {
     if (!(field= fld->field_for_view_update()))
@@ -8253,6 +8352,8 @@ fill_record(THD *thd, TABLE *table_arg, List<Item> &fields, List<Item> &values,
       goto err;
     }
     value=v++;
+    CLOG_TPRINTLN("FIELD = %s", fld->full_name());
+	CLOG_TPRINTLN("VALUE = %s", value->val_str()->ptr());
     DBUG_ASSERT(value);
     rfield= field->field;
     table= rfield->table;
@@ -8445,6 +8546,7 @@ fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,
 {
   int result;
   Table_triggers_list *triggers= table->triggers;
+  CLOG_FUNCTIOND("bool fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,...)");
 
   result= fill_record(thd, table, fields, values, ignore_errors,
                       event == TRG_EVENT_UPDATE);
@@ -8646,6 +8748,7 @@ my_bool mysql_rm_tmp_tables(void)
   TABLE_SHARE share;
   THD *thd;
   DBUG_ENTER("mysql_rm_tmp_tables");
+  CLOG_FUNCTIOND("my_bool mysql_rm_tmp_tables(void)");
 
   if (!(thd= new THD(0)))
     DBUG_RETURN(1);
@@ -8694,6 +8797,7 @@ my_bool mysql_rm_tmp_tables(void)
           So we hide error messages which happnes during deleting of these
           files(MYF(0)).
         */
+        CLOG_TPRINTLN("Deleted File = %s",filePath);
         (void) mysql_file_delete(key_file_misc, filePath, MYF(0));
       }
     }
@@ -8807,6 +8911,8 @@ open_system_tables_for_read(THD *thd, TABLE_LIST *table_list,
   LEX *lex= thd->lex;
 
   DBUG_ENTER("open_system_tables_for_read");
+  CLOG_FUNCTIOND("bool open_system_tables_for_read(THD *thd, TABLE_LIST *table_list,Open_tables_backup *backup)");
+  CLOG_PRINTLN("Open and lock system tables for read");
 
   /*
     Besides using new Open_tables_state for opening system tables,

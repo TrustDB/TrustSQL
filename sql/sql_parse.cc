@@ -15,6 +15,7 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA */
 
 #define MYSQL_LEX 1
+#include "clog.h"
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_parse.h"        // sql_kill, *_precheck, *_prepare
@@ -966,6 +967,7 @@ static void handle_bootstrap_impl(THD *thd)
 {
   MYSQL_FILE *file= bootstrap_file;
   DBUG_ENTER("handle_bootstrap_impl");
+  CLOG_FUNCTIOND("static void handle_bootstrap_impl(THD *thd)");
 
 #ifndef EMBEDDED_LIBRARY
   pthread_detach_this_thread();
@@ -990,9 +992,10 @@ static void handle_bootstrap_impl(THD *thd)
     int rc, length;
     char *query;
     int error= 0;
-
+	CLOG_TPRINTLN(" for ( ; ; )");
+	CLOG_TPRINTLN(" file ID =  0x%08X ", file->m_file);
     rc= read_bootstrap_query(buffer, &length, file, fgets_fn, &error);
-
+    CLOG_TPRINTLN(" read_boot_strap_query = %s",buffer);
     if (rc == READ_BOOTSTRAP_EOF)
       break;
     /*
@@ -1042,6 +1045,7 @@ static void handle_bootstrap_impl(THD *thd)
     thd->set_query_and_id(query, length, thd->charset(), next_query_id());
     int2store(query + length + 1, 0);           // No db in bootstrap
     DBUG_PRINT("query",("%-.4096s",thd->query()));
+
 #if defined(ENABLED_PROFILING)
     thd->profiling.start_new_query();
     thd->profiling.set_query_source(thd->query(), length);
@@ -1060,6 +1064,8 @@ static void handle_bootstrap_impl(THD *thd)
       break;
     }
 
+    CLOG_TPRINTLN("========================= SQL QUERY ==========================");
+	CLOG_TPRINTLN("[%s]",thd->query());
     mysql_parse(thd, thd->query(), length, &parser_state, FALSE, FALSE);
 
     bootstrap_error= thd->is_error();
@@ -1092,9 +1098,13 @@ static void handle_bootstrap_impl(THD *thd)
 pthread_handler_t handle_bootstrap(void *arg)
 {
   THD *thd=(THD*) arg;
+  CLOG_FUNCTIOND("pthread_handler_t handle_bootstrap(void *arg)");
+  CLOG_TPRINTLN("Execute commands from bootstrap_file. Used when creating the initial grant tables");
 
+  CLOG_STEP("1","set psi id");
   mysql_thread_set_psi_id(thd->thread_id);
 
+  CLOG_STEP("2","do_handle_bootstrap");
   do_handle_bootstrap(thd);
   return 0;
 }
@@ -1102,6 +1112,8 @@ pthread_handler_t handle_bootstrap(void *arg)
 void do_handle_bootstrap(THD *thd)
 {
   /* The following must be called before DBUG_ENTER */
+  CLOG_FUNCTIOND("void do_handle_bootstrap(THD *thd)");
+  CLOG_STEP("1","my_thread_init() & thd->store_globals()");
   thd->thread_stack= (char*) &thd;
   if (my_thread_init() || thd->store_globals())
   {
@@ -1112,6 +1124,7 @@ void do_handle_bootstrap(THD *thd)
     goto end;
   }
 
+  CLOG_STEP("2","handle_bootstrap_impl(hd)");
   handle_bootstrap_impl(thd);
 
 end:
@@ -1161,6 +1174,7 @@ static enum enum_server_command fetch_command(THD *thd, char *packet)
 {
   enum enum_server_command
     command= (enum enum_server_command) (uchar) packet[0];
+  CLOG_FUNCTIOND("enum enum_server_command fetch_command(THD *thd, char *packet)");
   DBUG_ENTER("fetch_command");
 
   if (command >= COM_END ||
@@ -1170,6 +1184,9 @@ static enum enum_server_command fetch_command(THD *thd, char *packet)
   DBUG_PRINT("info",("Command on %s = %d (%s)",
                      vio_description(thd->net.vio), command,
                      command_name[command].str));
+  CLOG_TPRINTLN("Command on %s = %d (%s)",
+                     vio_description(thd->net.vio), command,
+                     command_name[command].str);
   DBUG_RETURN(command);
 }
 
@@ -1204,6 +1221,8 @@ static bool wsrep_tables_accessible_when_detached(const TABLE_LIST *tables)
 
 bool do_command(THD *thd)
 {
+  CLOG_FUNCTIOND("bool do_command(THD *thd)");
+  CLOG_TPRINTLN("Read one command from connection and execute it (query or simple command).");
   bool return_value;
   char *packet= 0;
 #ifdef WITH_WSREP
@@ -1266,8 +1285,9 @@ bool do_command(THD *thd)
     matter here, because the read/recv() below doesn't use it.
   */
   DEBUG_SYNC(thd, "before_do_command_net_read");
-
+  CLOG_STEP("1","read packet ~~~~~");
   packet_length= my_net_read_packet(net, 1);
+  CLOG_TPRINTLN("read packet length = %d", packet_length);
 #ifdef WITH_WSREP
   if (WSREP(thd)) {
     mysql_mutex_lock(&thd->LOCK_thd_data);
@@ -1358,8 +1378,11 @@ bool do_command(THD *thd)
   /* Do not rely on my_net_read, extra safety against programming errors. */
   packet[packet_length]= '\0';                  /* safety */
 
-
+  CLOG_STEP("2","fetch comamnd ~");
   command= fetch_command(thd, packet);
+  CLOG_TPRINTLN("packet = %s",packet);
+  CLOG_DISPBUFFER(packet,packet_length);
+  CLOG_TPRINTLN("command = %d",command);
 
 #ifdef WITH_WSREP
   if (WSREP(thd))
@@ -1391,6 +1414,7 @@ bool do_command(THD *thd)
 
   DBUG_ASSERT(packet_length);
   DBUG_ASSERT(!thd->apc_target.is_enabled());
+  CLOG_STEP("3","dispatch_command!");
   return_value= dispatch_command(command, thd, packet+1,
                                  (uint) (packet_length-1), FALSE, FALSE);
 #ifdef WITH_WSREP
@@ -1557,7 +1581,7 @@ uint maria_multi_check(THD *thd, char *packet, size_t packet_length)
 
   @retval
     0   ok
-  @retval
+  @retvalcd
     1   request of thread shutdown, i. e. if command is
         COM_QUIT/COM_SHUTDOWN
 */
@@ -1565,14 +1589,22 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
 		      char* packet, uint packet_length, bool is_com_multi,
                       bool is_next_command)
 {
+  CLOG_FUNCTIOND("bool dispatch_command(...)");
+  CLOG_TPRINTLN("Perform one connection-level (COM-xxxx) command");
   NET *net= &thd->net;
   bool error= 0;
   bool do_end_of_statement= true;
   DBUG_ENTER("dispatch_command");
+
   DBUG_PRINT("info", ("command: %d %s", command,
                       (command_name[command].str != 0 ?
                        command_name[command].str :
                        "<?>")));
+  CLOG_TPRINTLN("bool dispatch_command(enum enum_server_command command, THD *thd,...");
+  CLOG_TPRINTLN("command: %d %s", command,
+          (command_name[command].str != 0 ?
+           command_name[command].str :
+           "<?>"));
   bool drop_more_results= 0;
 
   /* keep it withing 1 byte */
@@ -1616,6 +1648,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
 #if defined(ENABLED_PROFILING)
   thd->profiling.start_new_query();
 #endif
+  CLOG_STEP("1","MYSQL_COMMAND_START !!");
   MYSQL_COMMAND_START(thd->thread_id, command,
                       &thd->security_ctx->priv_user[0],
                       (char *) thd->security_ctx->host_or_ip);
@@ -1685,6 +1718,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
       thd->get_stmt_da()->set_skip_flush();
   }
 
+  CLOG_STEP("1","Perform the command!");
   switch (command) {
   case COM_INIT_DB:
   {
@@ -1820,6 +1854,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
   case COM_QUERY:
   {
     DBUG_ASSERT(thd->m_digest == NULL);
+    CLOG_STEP("1-1","COM_QUERY");
     thd->m_digest= & thd->m_digest_state;
     thd->m_digest->reset(thd->m_token_array, max_digest_length);
 
@@ -1832,6 +1867,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     char *packet_end= thd->query() + thd->query_length();
     general_log_write(thd, command, thd->query(), thd->query_length());
     DBUG_PRINT("query",("%-.4096s",thd->query()));
+    CLOG_TPRINTLN("query = %-.4096s",thd->query());
 #if defined(ENABLED_PROFILING)
     thd->profiling.set_query_source(thd->query(), thd->query_length());
 #endif
@@ -1842,6 +1878,7 @@ bool dispatch_command(enum enum_server_command command, THD *thd,
     if (unlikely(parser_state.init(thd, thd->query(), thd->query_length())))
       break;
 
+    CLOG_STEP("1-2","Parse the state");
     if (WSREP_ON)
       wsrep_mysql_parse(thd, thd->query(), thd->query_length(), &parser_state,
                         is_com_multi, is_next_command);
@@ -2553,6 +2590,12 @@ int prepare_schema_table(THD *thd, LEX *lex, Table_ident *table_ident,
   SELECT_LEX *schema_select_lex= NULL;
   DBUG_ENTER("prepare_schema_table");
 
+  CLOG_FUNCTIOND("int prepare_schema_table(THD *thd, LEX *lex, Table_ident *table_ident,...");
+  CLOG_TPRINTLN("Create a TABLE_LIST object for an INFORMATION_SCHEMA table.");
+  CLOG_TPRINTLN("This function is used in the parser to convert a SHOW or DESCRIBE table_name command to a SELECT from INFORMATION_SCHEMA..");
+
+  CLOG_STEP("1","switch(schema_table_idx");
+  CLOG_TPRINTLN("schema_table_idx = %d",schema_table_idx);
   switch (schema_table_idx) {
   case SCH_SCHEMATA:
 #if defined(DONT_ALLOW_SHOW_COMMANDS)
@@ -2580,6 +2623,7 @@ int prepare_schema_table(THD *thd, LEX *lex, Table_ident *table_ident,
       {
         DBUG_RETURN(1);
       }
+      CLOG_TPRINTLN("lex->select_lex.db.str = %s",lex->select_lex.db.str);
       schema_select_lex= new (thd->mem_root) SELECT_LEX();
       schema_select_lex->table_list.first= NULL;
       if (lower_case_table_names == 1)
@@ -2606,11 +2650,14 @@ int prepare_schema_table(THD *thd, LEX *lex, Table_ident *table_ident,
 #else
   {
     DBUG_ASSERT(table_ident);
+    CLOG_STEP("2","SCH_COLUMNS or SCH_STATISTICS");
     TABLE_LIST **query_tables_last= lex->query_tables_last;
     schema_select_lex= new (thd->mem_root) SELECT_LEX();
     /* 'parent_lex' is used in init_query() so it must be before it. */
     schema_select_lex->parent_lex= lex;
     schema_select_lex->init_query();
+    CLOG_STEP("3","add table list");
+	CLOG_TPRINTLN("table ident  db=%s table=%s",table_ident->db.str, table_ident->table.str);
     if (!schema_select_lex->add_table_to_list(thd, table_ident, 0, 0, TL_READ,
                                               MDL_SHARED_READ))
       DBUG_RETURN(1);
@@ -2632,6 +2679,7 @@ int prepare_schema_table(THD *thd, LEX *lex, Table_ident *table_ident,
   }
   
   SELECT_LEX *select_lex= lex->current_select;
+  CLOG_STEP("4","Make Schema Select");
   if (make_schema_select(thd, select_lex, get_schema_table(schema_table_idx)))
     DBUG_RETURN(1);
 
@@ -2707,6 +2755,10 @@ bool alloc_query(THD *thd, const char *packet, size_t packet_length)
 bool sp_process_definer(THD *thd)
 {
   DBUG_ENTER("sp_process_definer");
+  CLOG_FUNCTIOND("bool sp_process_definer(THD *thd)");
+  CLOG_TPRINTLN("If the definer is not specified, this means that CREATE-statement missed DEFINER-clause. DEFINER-clause can be missed in two cases:");
+  CLOG_TPRINTLN("    - The user submitted a statement w/o the clause. This is a normal");
+  CLOG_TPRINTLN("      case, we should assign CURRENT_USER as definer.");
 
   LEX *lex= thd->lex;
 
@@ -3221,6 +3273,10 @@ bool Sql_cmd_call::execute(THD *thd)
 int
 mysql_execute_command(THD *thd)
 {
+  CLOG_TPRINTLN("---------------------------------------------------");
+  CLOG_FUNCTIOND("int mysql_execute_command(THD *thd)");
+  CLOG_TPRINTLN("Execute command saved in thd and lex->sql_command.");
+  CLOG_TPRINTLN("---------------------------------------------------");
   int res= 0;
   int  up_result= 0;
   LEX  *lex= thd->lex;
@@ -3275,6 +3331,7 @@ mysql_execute_command(THD *thd)
     Remember last commmand executed, so that we can use it in functions called by
     dispatch_command()
   */
+  CLOG_STEP("1","Remember last command executed");
   thd->last_sql_command= lex->sql_command;
 
   /*
@@ -3283,6 +3340,7 @@ mysql_execute_command(THD *thd)
     that is not a SHOW command or a select that only access local
     variables, but for now this is probably good enough.
   */
+  CLOG_STEP("2","Reset warning count for each query that uses tables");
   if ((sql_command_flags[lex->sql_command] & CF_DIAGNOSTIC_STMT) != 0)
     thd->get_stmt_da()->set_warning_info_read_only(TRUE);
   else
@@ -3296,6 +3354,7 @@ mysql_execute_command(THD *thd)
     DBUG_RETURN(1);
 
 #ifdef HAVE_REPLICATION
+  CLOG_STEP("3","HAVE_REPLICATION(?)");
   if (unlikely(thd->slave_thread))
   {
     if (lex->sql_command == SQLCOM_DROP_TRIGGER)
@@ -3404,6 +3463,7 @@ mysql_execute_command(THD *thd)
       When option readonly is set deny operations which change non-temporary
       tables. Except for the replication thread and the 'super' users.
     */
+	  CLOG_STEP("4","When option readonly is set deny operations which change non-temporary tables.");
     if (deny_updates_if_read_only_option(thd, all_tables))
     {
       my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--read-only");
@@ -3418,6 +3478,7 @@ mysql_execute_command(THD *thd)
     /*
       change LOCK TABLE WRITE to transaction
     */
+	CLOG_STEP("5","change LOCK TABLE WRITE to transaction");
     if (lex->sql_command== SQLCOM_LOCK_TABLES && wsrep_convert_LOCK_to_trx)
     {
       for (TABLE_LIST *table= all_tables; table; table= table->next_global)
@@ -3443,6 +3504,7 @@ mysql_execute_command(THD *thd)
      * allow SET and SHOW queries and reads from information schema
      * and dirty reads (if configured)
      */
+    CLOG_STEP("6","Bail out if DB snampshot has not been istalled....");
     if (!thd->wsrep_applier &&
         !(wsrep_ready && wsrep_reject_queries == WSREP_REJECT_NONE)        &&
         !(thd->variables.wsrep_dirty_reads &&
@@ -3464,6 +3526,7 @@ mysql_execute_command(THD *thd)
   DBUG_ASSERT(thd->transaction.stmt.modified_non_trans_table == FALSE);
 
   /* store old value of binlog format */
+  CLOG_STEP("7","store old value of binlog format");
   enum_binlog_format orig_binlog_format,orig_current_stmt_binlog_format;
 
   thd->get_binlog_format(&orig_binlog_format,
@@ -3473,6 +3536,7 @@ mysql_execute_command(THD *thd)
   {
     Query_arena backup;
     DBUG_PRINT("info", ("SET STATEMENT %d vars", lex->stmt_var_list.elements));
+    CLOG_TPRINTLN("info - SET STATEMENT %d vars", lex->stmt_var_list.elements);
 
     lex->old_var_list.empty();
     List_iterator_fast<set_var_base> it(lex->stmt_var_list);
@@ -3598,6 +3662,7 @@ mysql_execute_command(THD *thd)
     privilege, system or statistic tables directly without the updates
     getting logged.
   */
+  CLOG_STEP("8","Force statement logging for DDL commands to allow us to update privilege...");
   if (!(sql_command_flags[lex->sql_command] &
         (CF_CAN_GENERATE_ROW_EVENTS | CF_FORCE_ORIGINAL_BINLOG_FORMAT |
          CF_STATUS_COMMAND)))
@@ -3609,6 +3674,7 @@ mysql_execute_command(THD *thd)
     not run in it's own transaction it may simply never appear on
     the slave in case the outside transaction rolls back.
   */
+  CLOG_STEP("9","End a active transction so that this command will have it's own tranaction...");
   if (stmt_causes_implicit_commit(thd, CF_IMPLICT_COMMIT_BEGIN))
   {
     /*
@@ -3645,6 +3711,7 @@ mysql_execute_command(THD *thd)
 
     Note that this check is done after any implicit commits.
   */
+  CLOG_STEP("10","Check if we are in a read-only transaction and we're trying to execute a statement...");
   if (thd->tx_read_only &&
       (sql_command_flags[lex->sql_command] & CF_DISALLOW_IN_RO_TRANS))
   {
@@ -3664,6 +3731,7 @@ mysql_execute_command(THD *thd)
     checks there is no security problem here as closing open
     HANDLER doesn't require any privileges anyway.
   */
+  CLOG_STEP("11","Close tables open by HANDLERs before executing DDL statement which is going to affect those tables.");
   if (sql_command_flags[lex->sql_command] & CF_HA_CLOSE)
     mysql_ha_rm_tables(thd, all_tables);
 
@@ -3671,6 +3739,7 @@ mysql_execute_command(THD *thd)
     Pre-open temporary tables to simplify privilege checking
     for statements which need this.
   */
+  CLOG_STEP("12","Pre-open temporary tables to simplify privilege checking for statements which need this.");
   if (sql_command_flags[lex->sql_command] & CF_PREOPEN_TMP_TABLES)
   {
     if (thd->open_temporary_tables(all_tables))
@@ -3678,8 +3747,10 @@ mysql_execute_command(THD *thd)
   }
 
   /* Start timeouts */
+  CLOG_STEP("13","Start timeouts");
   thd->set_query_timer();
 
+  CLOG_STEP("14","SWITCH(lex->sql_command)");
   switch (lex->sql_command) {
 
   case SQLCOM_SHOW_EVENTS:
@@ -3739,7 +3810,9 @@ mysql_execute_command(THD *thd)
   case SQLCOM_SHOW_STORAGE_ENGINES:
   case SQLCOM_SHOW_PROFILE:
   case SQLCOM_SELECT:
-   {
+  {
+	CLOG_STEP("14-1","case SQLCOM_SHOW..... /SELECT");
+	CLOG_TPRINTLN("lex->sql_command(0x%08X)",lex->sql_command);
 #ifdef WITH_WSREP
       if (lex->sql_command == SQLCOM_SELECT)
         WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_READ)
@@ -4016,6 +4089,7 @@ mysql_execute_command(THD *thd)
   case SQLCOM_CREATE_SEQUENCE:
   case SQLCOM_CREATE_TABLE:
   {
+	CLOG_STEP("14-1","case SQLCOM_CREATE_TABLE:");
     DBUG_ASSERT(first_table == all_tables && first_table != 0);
     bool link_to_local;
     TABLE_LIST *create_table= first_table;
@@ -4034,6 +4108,7 @@ mysql_execute_command(THD *thd)
       safe. A shallow copy is enough as this code won't modify any memory
       referenced from this structure.
     */
+    CLOG_STEP("14-1-1","Copy HA)CREATE_INFO structure in LEX.");
     Table_specification_st create_info(lex->create_info);
     /*
       We need to copy alter_info for the same reasons of re-execution
@@ -4049,13 +4124,16 @@ mysql_execute_command(THD *thd)
     }
 
     /* Check privileges */
+    CLOG_STEP("14-1-2","Check privileges");
     if ((res= create_table_precheck(thd, select_tables, create_table)))
       goto end_with_restore_list;
 
     /* Might have been updated in create_table_precheck */
+    CLOG_STEP("14-1-3","Might have been updated in create_table_precheck");
     create_info.alias= create_table->alias;
 
     /* Fix names if symlinked or relocated tables */
+    CLOG_STEP("14-1-4","Fix names if symlinked or relocated tables");
     if (append_file_to_dir(thd, &create_info.data_file_name,
 			   &create_table->table_name) ||
 	append_file_to_dir(thd, &create_info.index_file_name,
@@ -4066,6 +4144,7 @@ mysql_execute_command(THD *thd)
       If no engine type was given, work out the default now
       rather than at parse-time.
     */
+    CLOG_STEP("14-1-5","If no engine type was given, work out the default now rather than at parse-time.");
     if (!(create_info.used_fields & HA_CREATE_USED_ENGINE))
       create_info.use_default_db_type(thd);
 
@@ -4073,6 +4152,7 @@ mysql_execute_command(THD *thd)
       If we are using SET CHARSET without DEFAULT, add an implicit
       DEFAULT to not confuse old users. (This may change).
     */
+    CLOG_STEP("14-1-6","If we are using SET CHARSET without DEFAULT, add an implicit DEFAULT to not confuse old users. (This may change)");
     if ((create_info.used_fields &
 	 (HA_CREATE_USED_DEFAULT_CHARSET | HA_CREATE_USED_CHARSET)) ==
 	HA_CREATE_USED_CHARSET)
@@ -4089,6 +4169,7 @@ mysql_execute_command(THD *thd)
       CREATE TABLE OR EXISTS failures by dropping the table and
       retrying the create.
     */
+    CLOG_STEP("14-1-7","If we are a slave we should add OR REPLACE if we don't have IF EXISTS.");
     if (thd->slave_thread &&
         slave_ddl_exec_mode_options == SLAVE_EXEC_MODE_IDEMPOTENT &&
         !lex->create_info.if_not_exists())
@@ -4109,10 +4190,11 @@ mysql_execute_command(THD *thd)
       thd->work_part_info= part_info;
     }
 #endif
-
+    CLOG_STEP("14-1-8","With select");
     if (select_lex->item_list.elements)		// With select
     {
-      select_result *result;
+       CLOG_TPRINTLN("==== WITH SELECT ! ====");
+       select_result *result;
 
       /*
         CREATE TABLE...IGNORE/REPLACE SELECT... can be unsafe, unless
@@ -4171,6 +4253,7 @@ mysql_execute_command(THD *thd)
         complicated. See Bug #26379. Empty MERGE tables are read-only
         and don't allow CREATE...SELECT anyway.
       */
+      CLOG_STEP("14-1-9","Disable non-empty MERGE tables with CREATE...SELECT..");
       if (create_info.used_fields & HA_CREATE_USED_UNION)
       {
         my_error(ER_WRONG_OBJECT, MYF(0), create_table->db.str,
@@ -4180,6 +4263,7 @@ mysql_execute_command(THD *thd)
       }
 
       /* Copy temporarily the statement flags to thd for lock_table_names() */
+      CLOG_STEP("14-1-10","Copy temporarily the statement flags to thd for lock_table_names()");
       uint save_thd_create_info_options= thd->lex->create_info.options;
       thd->lex->create_info.options|= create_info.options;
       res= open_and_lock_tables(thd, create_info, lex->query_tables, TRUE, 0);
@@ -4193,6 +4277,7 @@ mysql_execute_command(THD *thd)
       }
 
       /* Ensure we don't try to create something from which we select from */
+      CLOG_STEP("14-1-11","Ensure we don't try to create something from which we select from");
       if (create_info.or_replace() && !create_info.tmp_table())
       {
         TABLE_LIST *duplicate;
@@ -4223,6 +4308,7 @@ mysql_execute_command(THD *thd)
           needs to be created for every execution of a PS/SP.
           Note: In wsrep-patch, CTAS is handled like a regular transaction.
         */
+        CLOG_STEP("14-1-12","select_create");
         if (unlikely((result= new (thd->mem_root)
                       select_create(thd, create_table,
                                     &create_info,
@@ -4249,9 +4335,11 @@ mysql_execute_command(THD *thd)
     else
     {
       /* regular create */
+      CLOG_TPRINTLN("==== REGULAR CREATE ! ====");
       if (create_info.like())
       {
         /* CREATE TABLE ... LIKE ... */
+    	CLOG_STEP("14-1-9","CREATE TABLE LIKE ...");
         res= mysql_create_like_table(thd, create_table, select_tables,
                                      &create_info);
       }
@@ -4275,6 +4363,8 @@ mysql_execute_command(THD *thd)
 	  WSREP_TO_ISOLATION_BEGIN(create_table->db.str, create_table->table_name.str, NULL);
         }
         /* Regular CREATE TABLE */
+		CLOG_STEP("14-1-10","CREATE TABLE");
+		CLOG_TPRINTLN("db_name = %s, table_name = %s",create_table->db.str,create_table->table_name.str);
         res= mysql_create_table(thd, create_table, &create_info, &alter_info);
       }
 
@@ -4699,6 +4789,7 @@ end_with_restore_list:
   {
     WSREP_SYNC_WAIT(thd, WSREP_SYNC_WAIT_BEFORE_INSERT_REPLACE);
     DBUG_ASSERT(first_table == all_tables && first_table != 0);
+	CLOG_STEP("14-1","case SQLCOM_INSERT..... /INSERT");
 
     if (WSREP_CLIENT(thd) &&
         wsrep_sync_wait(thd, WSREP_SYNC_WAIT_BEFORE_INSERT_REPLACE))
@@ -4711,11 +4802,13 @@ end_with_restore_list:
     */
     if (first_table->lock_type != TL_WRITE_DELAYED)
     {
+      CLOG_STEP("14-2","Open temporary tables");
       res= (thd->open_temporary_tables(all_tables)) ? TRUE : FALSE;
       if (res)
         break;
     }
 
+	CLOG_STEP("14-3","insert precheck");
     if ((res= insert_precheck(thd, all_tables)))
       break;
 
@@ -6455,6 +6548,9 @@ static bool execute_sqlcom_select(THD *thd, TABLE_LIST *all_tables)
   LEX	*lex= thd->lex;
   select_result *result=lex->result;
   bool res;
+  CLOG_FUNCTIOND("static bool execute_sqlcom_select(THD *thd, TABLE_LIST *all_tables)");
+
+  CLOG_STEP("1","Assign global limit variable if limit is not given");  
   /* assign global limit variable if limit is not given */
   {
     SELECT_LEX *param= lex->unit.global_parameters();
@@ -6463,6 +6559,8 @@ static bool execute_sqlcom_select(THD *thd, TABLE_LIST *all_tables)
         new (thd->mem_root) Item_int(thd,
                                      (ulonglong) thd->variables.select_limit);
   }
+
+  CLOG_STEP("2","open and lock all tables in LEX ");	
 
   if (!(res= open_and_lock_tables(thd, all_tables, TRUE, 0)))
   {
@@ -6744,6 +6842,11 @@ check_access(THD *thd, ulong want_access, const char *db, ulong *save_priv,
   DBUG_ENTER("check_access");
   DBUG_PRINT("enter",("db: %s  want_access: %lu  master_access: %lu",
                       db ? db : "", want_access, sctx->master_access));
+  
+  CLOG_FUNCTIOND("bool check_access(...)");
+  CLOG_TPRINTLN("Compare requested privileges with the privileges acquired from the User- and Db-tables.");
+  CLOG_TPRINTLN("enter - db: %s  want_access: %lu  master_access: %lu",
+                      db ? db : "", want_access, sctx->master_access);
 
   if (save_priv)
     *save_priv=0;
@@ -6941,6 +7044,8 @@ bool check_single_table_access(THD *thd, ulong privilege,
                                TABLE_LIST *all_tables, bool no_errors)
 {
   Security_context * backup_ctx= thd->security_ctx;
+  CLOG_FUNCTIOND("bool check_single_table_access(THD *thd, ulong privilege,...");
+  CLOG_PRINTLN("Check grants for commands which work only with one table.");
 
   /* we need to switch to the saved context (if any) */
   if (all_tables->security_ctx)
@@ -6989,6 +7094,8 @@ deny:
 
 bool check_one_table_access(THD *thd, ulong privilege, TABLE_LIST *all_tables)
 {
+  CLOG_FUNCTIOND("bool check_one_table_access(THD *thd, ulong privilege, TABLE_LIST *all_tables)");
+  CLOG_PRINTLN("Check grants for commands which work only with one table and all other tables....");
   if (check_single_table_access (thd,privilege,all_tables, FALSE))
     return 1;
 
@@ -7147,6 +7254,8 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
   TABLE_LIST *first_not_own_table= thd->lex->first_not_own_table();
   Security_context *sctx= thd->security_ctx, *backup_ctx= thd->security_ctx;
   uint i= 0;
+  CLOG_FUNCTIOND("bool check_table_access(...");
+  CLOG_TPRINTLN("Check if the requested privileges exists in either User-, Host- or Db-tables.");
   /*
     The check that first_not_own_table is not reached is for the case when
     the given table list refers to the list for prelocking (contains tables
@@ -7179,6 +7288,8 @@ check_table_access(THD *thd, ulong requirements,TABLE_LIST *tables,
 
     DBUG_PRINT("info", ("derived: %d  view: %d", table_ref->derived != 0,
                         table_ref->view != 0));
+    CLOG_TPRINTLN("info - derived: %d  view: %d", table_ref->derived != 0,
+                        table_ref->view != 0);
 
     if (table_ref->is_anonymous_derived_table())
       continue;
@@ -7297,6 +7408,8 @@ bool check_some_access(THD *thd, ulong want_access, TABLE_LIST *table)
 {
   ulong access;
   DBUG_ENTER("check_some_access");
+  CLOG_FUNCTIOND("bool check_some_access(...)");
+  CLOG_TPRINTLN("Check if the given table has any of the asked privileges");
 
   /* This loop will work as long as we have less than 32 privileges */
   for (access= 1; access < want_access ; access<<= 1)
@@ -7312,6 +7425,7 @@ bool check_some_access(THD *thd, ulong want_access, TABLE_LIST *table)
     }
   }
   DBUG_PRINT("exit",("no matching access rights"));
+  CLOG_TPRINTLN("exit - no matching access rights");
   DBUG_RETURN(1);
 }
 
@@ -7377,6 +7491,8 @@ bool check_fk_parent_table_access(THD *thd,
 {
   Key *key;
   List_iterator<Key> key_iterator(alter_info->key_list);
+  CLOG_FUNCTIOND("bool check_fk_parent_table_access(...)");
+  CLOG_TPRINTLN("Checks foreign key's parent table access");
 
   while ((key= key_iterator++))
   {
@@ -7387,7 +7503,7 @@ bool check_fk_parent_table_access(THD *thd,
       Foreign_key *fk_key= (Foreign_key *)key;
       LEX_CSTRING db_name;
       LEX_CSTRING table_name= { fk_key->ref_table.str,
-                               fk_key->ref_table.length };
+                               fk_key->ref_table.length };	  
       const ulong privileges= (SELECT_ACL | INSERT_ACL | UPDATE_ACL |
                                DELETE_ACL | REFERENCES_ACL);
 
@@ -7439,6 +7555,8 @@ bool check_fk_parent_table_access(THD *thd,
            is_qualified_table_name= false;
         }
       }
+	  CLOG_TPRINTLN(" REF_DB_NAME = %s",db_name);
+	  CLOG_TPRINTLN(" REF_TABLE_NAME = %s",table_name);
 
       // if lower_case_table_names is set then convert tablename to lower case.
       if (lower_case_table_names)
@@ -8007,9 +8125,13 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
                  bool is_com_multi,
                  bool is_next_command)
 {
+  CLOG_FUNCTIOND("void mysql_parse(...)");
   int error __attribute__((unused));
   DBUG_ENTER("mysql_parse");
-  DBUG_EXECUTE_IF("parser_debug", turn_parser_debug_on(););
+  // DBUG_EXECUTE_IF("parser_debug", turn_parser_debug_on(););
+#if ZLOG_ON==1
+  turn_parser_debug_on();
+#endif
 
   /*
     Warning.
@@ -8027,6 +8149,7 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
     is required for the cache to work properly.
     FIXME: cleanup the dependencies in the code to simplify this.
   */
+  CLOG_STEP("1","lex start!");
   lex_start(thd);
   thd->reset_for_next_command();
   if (is_next_command)
@@ -8039,7 +8162,7 @@ void mysql_parse(THD *thd, char *rawbuf, uint length,
   if (query_cache_send_result_to_client(thd, rawbuf, length) <= 0)
   {
     LEX *lex= thd->lex;
-
+    CLOG_STEP("2","parse_sql");
     bool err= parse_sql(thd, parser_state, NULL, true);
 
     if (likely(!err))
@@ -8239,11 +8362,15 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
   LEX_CSTRING alias_str;
   LEX *lex= thd->lex;
   DBUG_ENTER("add_table_to_list");
+  CLOG_FUNCTIOND("TABLE_LIST *st_select_lex::add_table_to_list(...)");
+  CLOG_TPRINTLN("Add a table(Table_idnet) to list of used tables.");
 
+  CLOG_TPRINTLN("DB = %s Table = %s",table->db.str, table->table.str);
   if (unlikely(!table))
     DBUG_RETURN(0);				// End of memory
   alias_str= alias ? *alias : table->table;
   DBUG_ASSERT(alias_str.str);
+  CLOG_STEP("1","Check name of table and DB");
   if (!MY_TEST(table_options & TL_OPTION_ALIAS) &&
       unlikely(check_table_name(table->table.str, table->table.length, FALSE)))
   {
@@ -8292,7 +8419,9 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
     if (ptr->db.length && ptr->db.str != any_db)
       ptr->db.length= my_casedn_str(files_charset_info, (char*) ptr->db.str);
   }
-      
+
+  CLOG_STEP("2","make TABLE_LIST form TALE_ident and defaults");
+	  
   ptr->table_name= table->table;
   ptr->lock_type=   lock_type;
   ptr->updating=    MY_TEST(table_options & TL_OPTION_UPDATING);
@@ -8303,7 +8432,8 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
   ptr->derived=	    table->sel;
   if (!ptr->derived && is_infoschema_db(&ptr->db))
   {
-    ST_SCHEMA_TABLE *schema_table;
+    CLOG_STEP("3","It is a schema table");    
+	ST_SCHEMA_TABLE *schema_table;
     if (ptr->updating &&
         /* Special cases which are processed by commands itself */
         lex->sql_command != SQLCOM_CHECK &&
@@ -8315,6 +8445,7 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
                INFORMATION_SCHEMA_NAME.str);
       DBUG_RETURN(0);
     }
+	CLOG_STEP("3-1","find schema table");    
     schema_table= find_schema_table(thd, &ptr->table_name);
     if (unlikely(!schema_table) ||
         (schema_table->hidden && 
@@ -8360,6 +8491,7 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
     }
   }
   /* Store the table reference preceding the current one. */
+  CLOG_STEP("4","Store the table reference preceding the current one");    
   if (table_list.elements > 0 && likely(!ptr->sequence))
   {
     /*
@@ -8388,6 +8520,7 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
     We don't store sequences into the local list to hide them from INSERT
     and SELECT.
   */
+  CLOG_STEP("5","Link the current table reference in a local list.");
   if (likely(!ptr->sequence))
     table_list.link_in_list(ptr, &ptr->next_local);
   ptr->next_name_resolution_table= NULL;
@@ -8395,6 +8528,7 @@ TABLE_LIST *st_select_lex::add_table_to_list(THD *thd,
   ptr->partition_names= partition_names;
 #endif /* WITH_PARTITION_STORAGE_ENGINE */
   /* Link table in global list (all used tables) */
+  CLOG_STEP("6","Link table in global list (all used tables)");
   lex->add_to_query_tables(ptr);
 
   // Pure table aliases do not need to be locked:
@@ -9128,6 +9262,10 @@ void sql_kill_user(THD *thd, LEX_USER *user, killed_state state)
 bool append_file_to_dir(THD *thd, const char **filename_ptr,
                         const LEX_CSTRING *table_name)
 {
+  CLOG_FUNCTIOND("bool append_file_to_dir(...)");
+  CLOG_TPRINTLN("If pointer is not a null pointer, append filename to it");
+  CLOG_TPRINTLN("P3 table_name = %s",table_name->str);
+  
   char buff[FN_REFLEN],*ptr, *end;
   if (!*filename_ptr)
     return 0;					// nothing to do
@@ -9466,6 +9604,7 @@ bool multi_delete_set_locks_and_link_aux_tables(LEX *lex)
 bool update_precheck(THD *thd, TABLE_LIST *tables)
 {
   DBUG_ENTER("update_precheck");
+  CLOG_FUNCTIOND("bool update_precheck(...)");
   if (thd->lex->select_lex.item_list.elements != thd->lex->value_list.elements)
   {
     my_message(ER_WRONG_VALUE_COUNT, ER_THD(thd, ER_WRONG_VALUE_COUNT), MYF(0));
@@ -9522,6 +9661,7 @@ bool insert_precheck(THD *thd, TABLE_LIST *tables)
 {
   LEX *lex= thd->lex;
   DBUG_ENTER("insert_precheck");
+  CLOG_FUNCTIOND("bool insert_precheck(THD *thd, TABLE_LIST *tables)");
 
   /*
     Check that we have modify privileges for the first table and
@@ -9530,6 +9670,7 @@ bool insert_precheck(THD *thd, TABLE_LIST *tables)
   ulong privilege= (INSERT_ACL |
                     (lex->duplicates == DUP_REPLACE ? DELETE_ACL : 0) |
                     (lex->value_list.elements ? UPDATE_ACL : 0));
+  CLOG_TPRINTLN(" privilege = 0x%08X (%d)",privilege,privilege);
 
   if (check_one_table_access(thd, privilege, tables))
     DBUG_RETURN(TRUE);
@@ -9592,6 +9733,7 @@ bool create_table_precheck(THD *thd, TABLE_LIST *tables,
   ulong want_priv;
   bool error= TRUE;                                 // Error message is given
   DBUG_ENTER("create_table_precheck");
+  CLOG_FUNCTIOND("bool create_table_precheck(THD *thd, TABLE_LIST *tables,TABLE_LIST *create_table)");
 
   /*
     Require CREATE [TEMPORARY] privilege on new table; for
@@ -9600,11 +9742,14 @@ bool create_table_precheck(THD *thd, TABLE_LIST *tables,
 
   want_priv= lex->tmp_table() ?  CREATE_TMP_ACL :
              (CREATE_ACL | (select_lex->item_list.elements ? INSERT_ACL : 0));
+  CLOG_TPRINTLN("want_priv = 0x%08X",want_priv);			 
 
   /* CREATE OR REPLACE on not temporary tables require DROP_ACL */
   if (lex->create_info.or_replace() && !lex->tmp_table())
     want_priv|= DROP_ACL;
-                          
+
+  CLOG_TPRINTLN("want_priv = 0x%08X",want_priv);			                           
+  CLOG_STEP("1","Check Access!");
   if (check_access(thd, want_priv, create_table->db.str,
                    &create_table->grant.privilege,
                    &create_table->grant.m_internal,
@@ -10055,6 +10200,8 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
                Object_creation_ctx *creation_ctx, bool do_pfs_digest)
 {
   bool ret_value;
+  CLOG_FUNCTIOND("bool parse_sql(...)");
+  CLOG_TPRINTLN("This is a wrapper of MYSQLparse(). All the code should call parse_sql()");
   DBUG_ENTER("parse_sql");
   DBUG_ASSERT(thd->m_parser_state == NULL);
   DBUG_ASSERT(thd->lex->m_sql_cmd == NULL);
@@ -10094,7 +10241,7 @@ bool parse_sql(THD *thd, Parser_state *parser_state,
   }
 
   /* Parse the query. */
-
+  CLOG_STEP("1","Parse the Query");
   bool mysql_parse_status=
          ((thd->variables.sql_mode & MODE_ORACLE) ?
           ORAparse(thd) :

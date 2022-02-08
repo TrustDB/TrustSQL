@@ -15,6 +15,8 @@
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 
+#include "clog.h"
+
 #define MYSQL_LEX 1
 #include "mariadb.h"   /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
@@ -1909,6 +1911,8 @@ bool check_key_in_view(THD *thd, TABLE_LIST *view)
   Field_translator *trans, *end_of_trans;
   KEY *key_info, *key_info_end;
   DBUG_ENTER("check_key_in_view");
+  CLOG_FUNCTIOND("bool check_key_in_view(THD *thd, TABLE_LIST *view)");
+  CLOG_TPRINTLN("check of key (primary or unique) presence in updatable view");
 
   /*
     we do not support updatable UNIONs in VIEW, so we can check just limit of

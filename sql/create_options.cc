@@ -18,11 +18,11 @@
 
   Engine defined options of tables/fields/keys in CREATE/ALTER TABLE.
 */
-
 #include "mariadb.h"
 #include "create_options.h"
 #include <my_getopt.h>
 #include "set_var.h"
+#include "clog.h"
 
 #define FRM_QUOTED_VALUE 0x8000U
 
@@ -41,6 +41,13 @@ void engine_option_value::link(engine_option_value **start,
                        name.str, (uint) name.length,
                        value.str, (uint) value.length));
   engine_option_value *opt;
+
+  CLOG_FUNCTIOND("void engine_option_value::link(engine_option_value **start, engine_option_value **end)");
+  CLOG_TPRINTLN("enter  -  name: '%s' (%u)  value: '%s' (%u)", 
+                       name.str, (uint) name.length,
+                       value.str, (uint) value.length);
+  
+  
   /* check duplicates to avoid writing them to frm*/
   for(opt= *start;
       opt && ((opt->parsed && !opt->value.str) ||
@@ -58,7 +65,7 @@ void engine_option_value::link(engine_option_value **start,
 
     @note: We add even if it is opt->value.str == NULL because it can be
     ALTER TABLE to remove the option.
-  */
+  */  
   if (*start)
   {
     (*end)->next= this;
@@ -278,19 +285,26 @@ bool parse_option_list(THD* thd, handlerton *hton, void *option_struct_arg,
              ("struct: %p list: %p rules: %p suppress_warning: %u root: %p",
               *option_struct, *option_list, rules,
               (uint) suppress_warning, root));
+  CLOG_FUNCTIOND("bool parse_option_list(...)");
+  CLOG_TPRINTLN("Creates option structure and parses list of options in it");	
+  CLOG_TPRINTLN("enter - struct :  %p list: %p rules: %p suppress_warning: %u root: %p",
+              *option_struct, *option_list, rules,
+              (uint) suppress_warning, root);
 
   if (rules)
   {
-    for (opt= rules; opt->name; opt++)
+    for (opt= rules; opt->name; opt++) {
+      CLOG_TPRINTLN("opt->name = %s,  opt->type=%d,   opt->offset=%d",opt->name,opt->type,opt->offset);
       set_if_bigger(option_struct_size, opt->offset +
                     ha_option_type_sizeof[opt->type]);
-
+    }
     *option_struct= alloc_root(root, option_struct_size);
   }
 
   for (opt= rules; rules && opt->name; opt++)
   {
     bool seen=false;
+    CLOG_TPRINTLN("rule = %s ",opt->name);
     for (val= *option_list; val; val= val->next)
     {
       last= val;
@@ -303,6 +317,7 @@ bool parse_option_list(THD* thd, handlerton *hton, void *option_struct_arg,
       if (val->parsed && !val->value.str)
         continue;
 
+      CLOG_TPRINTLN(" ----> new option = %s  option_parsed = %d value = %s", val->name.str, val->parsed, val->value.str);
       if (set_one_value(opt, thd, &val->value,
                         *option_struct, suppress_warning || val->parsed, root))
         DBUG_RETURN(TRUE);
@@ -488,10 +503,14 @@ bool parse_engine_table_options(THD *thd, handlerton *ht, TABLE_SHARE *share)
 {
   MEM_ROOT *root= &share->mem_root;
   DBUG_ENTER("parse_engine_table_options");
+  CLOG_FUNCTIOND("bool parse_engine_table_options(THD *thd, handlerton *ht, TABLE_SHARE *share)");
 
+  CLOG_STEP("1","parse Table Options()");
   if (parse_option_list(thd, ht, &share->option_struct, & share->option_list,
                         ht->table_options, TRUE, root))
     DBUG_RETURN(TRUE);
+
+  CLOG_STEP("2","parse Fields Option()");
 
   for (Field **field= share->field; *field; field++)
   {
@@ -501,6 +520,7 @@ bool parse_engine_table_options(THD *thd, handlerton *ht, TABLE_SHARE *share)
       DBUG_RETURN(TRUE);
   }
 
+  CLOG_STEP("3","parse index Option()");
   for (uint index= 0; index < share->keys; index ++)
   {
     if (parse_option_list(thd, ht, &share->key_info[index].option_struct,
@@ -583,6 +603,7 @@ uint engine_table_options_frm_length(engine_option_value *table_option_list,
   Create_field *field;
   uint res, index;
   DBUG_ENTER("engine_table_options_frm_length");
+  CLOG_FUNCTIOND("uint engine_table_options_frm_length(...) - Calculates length of options image in the .frm");
 
   res= option_list_frm_length(table_option_list);
 
@@ -664,6 +685,7 @@ uchar *engine_table_options_frm_image(uchar *buff,
   Create_field *field;
   KEY *key_info_end= key_info + keys;
   DBUG_ENTER("engine_table_options_frm_image");
+  CLOG_FUNCTIOND("uchar *engine_table_options_frm_image(...)");
 
   buff= option_list_frm_image(buff, table_option_list);
 

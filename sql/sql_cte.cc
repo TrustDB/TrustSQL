@@ -1045,6 +1045,10 @@ With_element *st_select_lex::find_table_def_in_with_clauses(TABLE_LIST *table)
   With_element *found= NULL;
   st_select_lex_unit *master_unit;
   st_select_lex *outer_sl;
+
+  CLOG_FUNCTIOND("With_element *st_select_lex::find_table_def_in_with_clauses(TABLE_LIST *table)");
+  CLOG_TPRINTLN("Search for the definition of the given table referred in this select node");
+  
   for (st_select_lex *sl= this; sl; sl= outer_sl)
   {
     /* 

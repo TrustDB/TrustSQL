@@ -45,6 +45,7 @@
 #include "sp.h"
 #include "transaction.h"
 #include "lock.h"                               // MYSQL_LOCK_IGNORE_TIMEOUT
+#include "clog.h"
 
 /*
   We only use 1 mutex to guard the data structures - THR_LOCK_servers.
@@ -138,6 +139,7 @@ bool servers_init(bool dont_read_servers_table)
   THD  *thd;
   bool return_val= FALSE;
   DBUG_ENTER("servers_init");
+  CLOG_FUNCTIOND("bool servers_init(bool dont_read_servers_table)");
 
 #ifdef HAVE_PSI_INTERFACE
   init_servers_cache_psi_keys();
@@ -203,6 +205,7 @@ static bool servers_load(THD *thd, TABLE_LIST *tables)
   READ_RECORD read_record_info;
   bool return_val= TRUE;
   DBUG_ENTER("servers_load");
+  CLOG_FUNCTIOND("static bool servers_load(THD *thd, TABLE_LIST *tables)");
 
   my_hash_reset(&servers_cache);
   free_root(&mem, MYF(0));
@@ -250,6 +253,7 @@ bool servers_reload(THD *thd)
   TABLE_LIST tables[1];
   bool return_val= TRUE;
   DBUG_ENTER("servers_reload");
+  CLOG_FUNCTIOND("bool servers_reload(THD *thd)");
 
   DBUG_PRINT("info", ("locking servers_cache"));
   mysql_rwlock_wrlock(&THR_LOCK_servers);

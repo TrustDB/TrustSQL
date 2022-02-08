@@ -31,6 +31,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
@@ -142,6 +144,8 @@ void udf_init()
   TABLE *table;
   int error;
   DBUG_ENTER("ufd_init");
+  CLOG_FUNCTIOND("void udf_init()");
+  CLOG_TPRINTLN("Read all predeclared functions from mysql.func and accept all that can be used.");
 
   if (initialized || opt_noacl)
     DBUG_VOID_RETURN;

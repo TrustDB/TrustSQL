@@ -26,6 +26,7 @@
 #include "unireg.h"
 #include "discover.h"
 #include <my_dir.h>
+#include "clog.h"
 
 /**
   Read the contents of a .frm file.
@@ -118,12 +119,15 @@ int writefrm(const char *path, const char *db, const char *table,
   int create_flags= O_RDWR | O_TRUNC;
   DBUG_ENTER("writefrm");
   DBUG_PRINT("enter",("name: '%s' len: %lu ",path, (ulong) len));
+  CLOG_FUNCTIOND("int writefrm(...)");
+  CLOG_TPRINTLN("enter - name: '%s' len: %lu ",path, (ulong) len);
 
   if (tmp_table)
     create_flags|= O_EXCL | O_NOFOLLOW;
 
   strxnmov(file_name, sizeof(file_name)-1, path, reg_ext, NullS);
 
+  CLOG_STEP("1","create file");
   File file= mysql_file_create(key_file_frm, file_name,
                                CREATE_MODE, create_flags, MYF(0));
 
@@ -136,12 +140,15 @@ int writefrm(const char *path, const char *db, const char *table,
   }
   else
   {
+    CLOG_STEP("2","write file");
     error= (int)mysql_file_write(file, frmdata, len, MYF(MY_WME | MY_NABP));
 
-    if (!error && !tmp_table && opt_sync_frm)
+    if (!error && !tmp_table && opt_sync_frm) {
+        CLOG_STEP("3","file sync, ....");		
         error= mysql_file_sync(file, MYF(MY_WME)) ||
              my_sync_dir_by_file(file_name, MYF(MY_WME));
-
+    }
+    CLOG_STEP("4","file close()");		
     error|= mysql_file_close(file, MYF(MY_WME));
   }
   DBUG_RETURN(error);

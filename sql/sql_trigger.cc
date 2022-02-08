@@ -35,6 +35,8 @@
 #include "sp_cache.h"                     // sp_invalidate_cache
 #include <mysys_err.h>
 
+#include "clog.h"
+
 LEX_CSTRING *make_lex_string(LEX_CSTRING *lex_str,
                              const char* str, size_t length,
                              MEM_ROOT *mem_root)
@@ -409,6 +411,8 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
   Query_tables_list backup;
   DBUG_ENTER("mysql_create_or_drop_trigger");
 
+  CLOG_FUNCTIOND("bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)");
+
   /* Charset of the buffer for statement must be system one. */
   stmt_query.set_charset(system_charset_info);
 
@@ -422,6 +426,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
     need second part of condition below, since check_access() function also
     checks that db is specified.
   */
+  CLOG_STEP("1","Trigger DB specified privilege check!");
   if (!thd->lex->spname->m_db.length || (create && !tables->db.length))
   {
     my_error(ER_NO_DB_ERROR, MYF(0));
@@ -431,6 +436,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
   /*
     We don't allow creating triggers on tables in the 'mysql' schema
   */
+  CLOG_STEP("2","Trigger schema talbe check!");
   if (create && lex_string_eq(&tables->db, STRING_WITH_LEN("mysql")))
   {
     my_error(ER_NO_TRIGGERS_ON_SYSTEM_SCHEMA, MYF(0));
@@ -447,6 +453,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
     binlogged, so they share the same danger, so trust_function_creators
     applies to them too.
   */
+  CLOG_STEP("3","Trigger DETERMINISTIC clause!");
   if (!trust_function_creators                               &&
       (WSREP_EMULATE_BINLOG(thd) || mysql_bin_log.is_open()) &&
       !(thd->security_ctx->master_access & SUPER_ACL))
@@ -455,8 +462,10 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
     DBUG_RETURN(TRUE);
   }
 
+  CLOG_TPRINTLN("create(TRUE) or drop(FALSE) = %d",create);
   if (!create)
   {
+	CLOG_STEP("4","Drop Trigger !");
     bool if_exists= thd->lex->if_exists();
 
     /*
@@ -503,6 +512,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
   /*
     Check that the user has TRIGGER privilege on the subject table.
   */
+  CLOG_STEP("5","Check that the user has TRIGGER privilege on the subject table.");
   {
     bool err_status;
     TABLE_LIST **save_query_tables_own_last= thd->lex->query_tables_own_last;
@@ -522,9 +532,11 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
 #endif
 
   /* We should have only one table in table list. */
+  CLOG_STEP("6","We should have only one table in table list.");
   DBUG_ASSERT(tables->next_global == 0);
 
   /* We do not allow creation of triggers on temporary tables. */
+  CLOG_STEP("7","We do not allow creation of triggers on temporary tables");
   if (create && thd->find_tmp_table_share(tables))
   {
     my_error(ER_TRG_ON_VIEW_OR_TEMP_TABLE, MYF(0), tables->alias.str);
@@ -661,7 +673,8 @@ static void build_trig_stmt_query(THD *thd, TABLE_LIST *tables,
   LEX *lex= thd->lex;
   size_t prefix_trimmed, suffix_trimmed;
   size_t original_length;
-
+  CLOG_FUNCTIOND("static void build_trig_stmt_query(THD *thd, TABLE_LIST *tables,....)");
+  CLOG_TPRINTLN("Build stmt_query to write it in the bin-log, the statement to write in the trigger file and the trigger definer.");
   /*
     Create a query with the full trigger definition.
     The original query is not appropriate, as it can miss the DEFINER=XXX part.
@@ -761,17 +774,20 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
   Trigger *trigger= 0;
   bool trigger_dropped= 0;
   DBUG_ENTER("create_trigger");
+  CLOG_FUNCTIOND("bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,String *stmt_query)");
 
   if (check_for_broken_triggers())
     DBUG_RETURN(true);
 
   /* Trigger must be in the same schema as target table. */
+  CLOG_STEP("1", "Trigger must be in the same schema as target table.");
   if (lex_string_cmp(table_alias_charset, &table->s->db, &lex->spname->m_db))
   {
     my_error(ER_TRG_IN_WRONG_SCHEMA, MYF(0));
     DBUG_RETURN(true);
   }
 
+  CLOG_STEP("2", "Definer Check");
   if (sp_process_definer(thd))
     DBUG_RETURN(true);
 
@@ -790,7 +806,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
     of Field objects here.
   */
   old_field= new_field= table->field;
-
+  CLOG_STEP("3", "Let us check if all references to fields in old/new versions of row in this trigger are ok.");
   for (trg_field= lex->trg_table_fields.first;
        trg_field; trg_field= trg_field->next_trg_field)
   {
@@ -805,6 +821,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
   }
 
   /* Ensure anchor trigger exists */
+  CLOG_STEP("4", "Ensure anchor trigger exists");
   if (lex->trg_chistics.ordering_clause != TRG_ORDER_NONE)
   {
     if (!(trigger= find_trigger(&lex->trg_chistics.anchor_trigger_name, 0)) ||
@@ -822,6 +839,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
     sql_create_definition_file() files handles renaming and backup of older
     versions
   */
+  CLOG_STEP("5", "Here we are creating file with triggers and save all triggers in it");
   file.length= build_table_filename(file_buff, FN_REFLEN - 1,
                                     tables->db.str, tables->table_name.str,
                                     TRG_EXT, 0);
@@ -831,6 +849,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
                                              lex->spname->m_name.str,
                                              TRN_EXT, 0);
   trigname_file.str= trigname_buff;
+  CLOG_TPRINTLN("trigger_file=%s",trigname_file.str);
 
   /* Use the filesystem to enforce trigger namespace constraints. */
   if (!access(trigname_buff, F_OK))
@@ -880,6 +899,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
     We are not using lex->sphead here as an argument to Trigger() as we are
     going to access lex->sphead later in build_trig_stmt_query()
   */
+  CLOG_STEP("6", "create Trigger Object");
   if (!(trigger= new (&table->mem_root) Trigger(this, 0)))
     goto err_without_cleanup;
 
@@ -889,15 +909,48 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
     goto err_without_cleanup;
 
   /* Populate the trigger object */
-
+  CLOG_STEP("7", "Populate the trigger object");
   trigger->sql_mode= thd->variables.sql_mode;
   /* Time with 2 decimals, like in MySQL 5.7 */
   trigger->create_time= ((ulonglong) thd->query_start())*100 + thd->query_start_sec_part()/10000;
+  CLOG_STEP("8", "build trigger statement query");
+  CLOG_TPRINTLN("STMT_QUERY=%s",stmt_query->c_ptr());
   build_trig_stmt_query(thd, tables, stmt_query, &trigger_definition,
                         &trigger->definer, trg_definer_holder);
 
   trigger->definition.str=    trigger_definition.c_ptr();
   trigger->definition.length= trigger_definition.length();
+  CLOG_TPRINTLN("trigger definition=%s",trigger->definition.str);
+
+#ifdef TRUSTSQL_BUILD
+  if(table->s->trusted_table_type!=0) {
+	  // table is trusted type.
+	  CLOG_STEP("9", "Trigger for TRUSTED TABLE");
+	  CLOG_STEP("9-1", "only TRG_EVENT_INSERT is available for Trigger on TRUSTED TABLE");
+	  if(lex->trg_chistics.event!=TRG_EVENT_INSERT) {
+		  CLOG_TPRINTLN("FAIL - only TRG_EVENT_INSERT is available for TRUSTED TABLE");
+		  my_error(5100, MYF(0),"FAIL - only TRG_EVENT_INSERT is available for TRUSTED TABLE" );
+		  goto err_with_cleanup;
+	  }
+	  LEX_CSTRING trg_sign;
+	  if(lex->trg_chistics.action_time==TRG_ACTION_BEFORE)
+		  trg_sign =table->s->trust_options->trigger_before_insert_sign;
+	  else if(lex->trg_chistics.action_time==TRG_ACTION_AFTER)
+		  trg_sign =table->s->trust_options->trigger_after_insert_sign;
+	  if(trg_sign.str==0) {
+		  CLOG_TPRINTLN("FAIL - No trigger sign on target table(%s)",tables->table_name.str);
+		  my_error(5101, MYF(0),"FAIL - No trigger sign on target table");
+  		  goto err_with_cleanup;
+	  }
+	  String transformedForSign;
+	  transform_trigger_for_sign(thd, stmt_query, &transformedForSign);
+	  if(verify_string(thd, transformedForSign.lex_cstring() , table->s->trust_options->table_issuer_pub_key, trg_sign)) {
+		  CLOG_TPRINTLN("FAIL - Trigger sign verification");
+		  my_error(5102, MYF(0),"FAIL - Trigger sign verification");
+		  goto err_with_cleanup;
+	  }
+  }
+#endif
 
   /*
     Fill character set information:
@@ -919,6 +972,7 @@ bool Table_triggers_list::create_trigger(THD *thd, TABLE_LIST *tables,
               trigger);
 
   /* Create trigger definition file .TRG */
+  CLOG_STEP("9", "Create trigger definition file .TRG");
   if (unlikely(create_lists_needed_for_files(thd->mem_root)))
     goto err_with_cleanup;
 

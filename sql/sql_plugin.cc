@@ -39,6 +39,7 @@
 #include <mysql/plugin_password_validation.h>
 #include <mysql/plugin_encryption.h>
 #include "sql_plugin_compat.h"
+#include "clog.h"
 
 #ifdef HAVE_LINK_H
 #include <link.h>
@@ -1408,6 +1409,7 @@ static int plugin_initialize(MEM_ROOT *tmp_root, struct st_plugin_int *plugin,
 {
   int ret= 1;
   DBUG_ENTER("plugin_initialize");
+  CLOG_FUNCTIOND("static int plugin_initialize(MEM_ROOT *tmp_root, struct st_plugin_int *plugin...");
 
   mysql_mutex_assert_owner(&LOCK_plugin);
   uint state= plugin->state;
@@ -1554,12 +1556,14 @@ int plugin_init(int *argc, char **argv, int flags)
   bool mandatory= true;
   LEX_CSTRING MyISAM= { STRING_WITH_LEN("MyISAM") };
   DBUG_ENTER("plugin_init");
+  CLOG_FUNCTIOND("int plugin_init(int *argc, char **argv, int flags)");
 
   if (initialized)
     DBUG_RETURN(0);
 
   dlopen_count =0;
 
+  CLOG_STEP("1","init alloc root ~ plugin, plugin_vars, plugin_tmp");
   init_alloc_root(&plugin_mem_root, "plugin", 4096, 4096, MYF(0));
   init_alloc_root(&plugin_vars_mem_root, "plugin_vars", 4096, 4096, MYF(0));
   init_alloc_root(&tmp_root, "plugin_tmp", 4096, 4096, MYF(0));
@@ -1572,12 +1576,14 @@ int plugin_init(int *argc, char **argv, int flags)
     The 80 is from 2016-04-27 when we had 71 default plugins
     Big enough to avoid many mallocs even in future
   */
+  CLOG_STEP("2","my_init_dynamic_array~"); 
   if (my_init_dynamic_array(&plugin_dl_array,
                             sizeof(struct st_plugin_dl *), 16, 16, MYF(0)) ||
       my_init_dynamic_array(&plugin_array,
                             sizeof(struct st_plugin_int *), 80, 32, MYF(0)))
     goto err;
 
+  CLOG_STEP("2","plugin hash init!"); 
   for (i= 0; i < MYSQL_MAX_PLUGIN_TYPE_NUM; i++)
   {
     if (my_hash_init(&plugin_hash[i], system_charset_info, 32, 0, 0,
@@ -1599,6 +1605,7 @@ int plugin_init(int *argc, char **argv, int flags)
   /*
     First we register builtin plugins
   */
+  CLOG_STEP("3","register builtin plugins!"); 
   if (global_system_variables.log_warnings >= 9)
     sql_print_information("Initializing built-in plugins");
 
@@ -1624,6 +1631,7 @@ int plugin_init(int *argc, char **argv, int flags)
       tmp.name.length= strlen(plugin->name);
       tmp.state= 0;
       tmp.load_option= mandatory ? PLUGIN_FORCE : PLUGIN_ON;
+	  CLOG_TPRINTLN("plugin->name = %s",(char *)plugin->name);
 
       for (i=0; i < array_elements(override_plugin_load_policy); i++)
       {
@@ -1646,6 +1654,7 @@ int plugin_init(int *argc, char **argv, int flags)
     First, we initialize only MyISAM - that should almost always succeed
     (almost always, because plugins can be loaded outside of the server, too).
   */
+  CLOG_STEP("4","Initialize only MyISAM - taht should almost always succeed"); 
   plugin_ptr= plugin_find_internal(&MyISAM, MYSQL_STORAGE_ENGINE_PLUGIN);
   DBUG_ASSERT(plugin_ptr || !mysql_mandatory_plugins[0]);
   if (plugin_ptr)
@@ -1667,6 +1676,7 @@ int plugin_init(int *argc, char **argv, int flags)
   mysql_mutex_unlock(&LOCK_plugin);
 
   /* Register (not initialize!) all dynamic plugins */
+  CLOG_STEP("5","Register (not initialize!) all dynamic plugins"); 
   if (!(flags & PLUGIN_INIT_SKIP_DYNAMIC_LOADING))
   {
     I_List_iterator<i_string> iter(opt_plugin_load_list);
@@ -1680,6 +1690,7 @@ int plugin_init(int *argc, char **argv, int flags)
     {
       char path[FN_REFLEN + 1];
       build_table_filename(path, sizeof(path) - 1, "mysql", "plugin", reg_ext, 0);
+	  CLOG_TPRINTLN(" plugin path = %s",path);
       char engine_name_buf[NAME_CHAR_LEN + 1];
       LEX_CSTRING maybe_myisam= { engine_name_buf, 0 };
       bool is_sequence;
@@ -1696,7 +1707,7 @@ int plugin_init(int *argc, char **argv, int flags)
   /*
     Now we initialize all remaining plugins
   */
-
+  CLOG_STEP("6","Now we initialize all remaining plugins"); 
   mysql_mutex_lock(&LOCK_plugin);
   reap= (st_plugin_int **) my_alloca((plugin_array.elements+1) * sizeof(void*));
   *(reap++)= NULL;
@@ -1734,6 +1745,7 @@ int plugin_init(int *argc, char **argv, int flags)
   /*
     Check if any plugins have to be reaped
   */
+  CLOG_STEP("7","Check if any plugins have to be reaped"); 
   while ((plugin_ptr= *(--reap)))
   {
     mysql_mutex_unlock(&LOCK_plugin);
@@ -1796,6 +1808,8 @@ static void plugin_load(MEM_ROOT *tmp_root)
   THD *new_thd= new THD(0);
   bool result;
   DBUG_ENTER("plugin_load");
+  CLOG_FUNCTIOND("static void plugin_load(MEM_ROOT *tmp_root)");
+
 
   if (global_system_variables.log_warnings >= 9)
     sql_print_information("Initializing installed plugins");
@@ -1807,6 +1821,7 @@ static void plugin_load(MEM_ROOT *tmp_root)
   tables.init_one_table(&MYSQL_SCHEMA_NAME, &MYSQL_PLUGIN_NAME, 0, TL_READ);
   tables.open_strategy= TABLE_LIST::OPEN_NORMAL;
 
+  CLOG_STEP("1","open_and_lock_tables()");
   result= open_and_lock_tables(new_thd, &tables, FALSE, MYSQL_LOCK_IGNORE_TIMEOUT);
 
   table= tables.table;
@@ -1821,6 +1836,8 @@ static void plugin_load(MEM_ROOT *tmp_root)
                         "Some options may be missing from the help text");
     goto end;
   }
+
+  CLOG_STEP("2","init_read_record");
 
   if (init_read_record(&read_record_info, new_thd, table, NULL, NULL, 1, 0,
                        FALSE))

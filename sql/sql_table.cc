@@ -17,7 +17,6 @@
 */
 
 /* drop and alter of tables */
-
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
@@ -55,7 +54,11 @@
 #include "sql_audit.h"
 #include "sql_sequence.h"
 #include "tztime.h"
+#include "clog.h"
 
+#ifdef TRUSTSQL_BUILD
+#include "trustsql_patch.h"
+#endif
 
 #ifdef __WIN__
 #include <io.h>
@@ -541,6 +544,8 @@ uint build_table_filename(char *buff, size_t bufflen, const char *db,
   DBUG_ENTER("build_table_filename");
   DBUG_PRINT("enter", ("db: '%s'  table_name: '%s'  ext: '%s'  flags: %x",
                        db, table_name, ext, flags));
+  CLOG_FUNCTIOND("uint build_table_filename(char *buff, size_t bufflen, const char *db,...");
+  CLOG_TPRINTLN("db: '%s'  table_name: '%s'  ext: '%s'  flags: %x", db, table_name, ext, flags);
 
   (void) tablename_to_filename(db, dbbuff, sizeof(dbbuff));
 
@@ -572,6 +577,7 @@ uint build_table_filename(char *buff, size_t bufflen, const char *db,
   pos= strxnmov(pos, end - pos, tbbuff, ext, NullS);
 
   DBUG_PRINT("exit", ("buff: '%s'", buff));
+  CLOG_TPRINTLN("buff: '%s'", buff);
   DBUG_RETURN((uint)(pos - buff));
 }
 
@@ -2031,6 +2037,7 @@ bool mysql_rm_table(THD *thd,TABLE_LIST *tables, bool if_exists,
   Drop_table_error_handler err_handler;
   TABLE_LIST *table;
   DBUG_ENTER("mysql_rm_table");
+  CLOG_FUNCTIOND("bool mysql_rm_table(THD *thd,TABLE_LIST *tables, bool if_exists,...)");
 
   /* Disable drop of enabled log tables, must be done before name locking */
   for (table= tables; table; table= table->next_local)
@@ -2230,6 +2237,8 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
   String built_query;
   String built_trans_tmp_query, built_non_trans_tmp_query;
   DBUG_ENTER("mysql_rm_table_no_locks");
+  CLOG_FUNCTIOND("int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,...");
+  CLOG_PRINTLN("Execute the drop of a normal or temporary table.");
 
   wrong_tables.length(0);
   /*
@@ -2313,6 +2322,9 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
     DBUG_PRINT("table", ("table_l: '%s'.'%s'  table: %p  s: %p",
                          table->db.str, table->table_name.str,  table->table,
                          table->table ?  table->table->s : NULL));
+	CLOG_TPRINTLN("table_l: '%s'.'%s'  table: %p  s: %p",
+                         table->db.str, table->table_name.str,  table->table,
+                         table->table ?  table->table->s : NULL);
 
     /*
       If we are in locked tables mode and are dropping a temporary table,
@@ -2398,6 +2410,7 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
       /* remove .frm file and engine files */
       path_length= build_table_filename(path, sizeof(path) - 1, db.str, alias.str,
                                         reg_ext, 0);
+	  CLOG_TPRINTLN("path=%s",&path[0]);
 
       /*
         This handles the case where a "DROP" was executed and a regular
@@ -2428,6 +2441,7 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
         built_query.append(",");
       }
     }
+	CLOG_TPRINTLN("built_query =  %s",built_query.c_ptr());
     DEBUG_SYNC(thd, "rm_table_no_locks_before_delete_table");
     error= 0;
     if (drop_temporary ||
@@ -2527,6 +2541,14 @@ int mysql_rm_table_no_locks(THD *thd, TABLE_LIST *tables, bool if_exists,
           frm_delete_error= my_errno;
           DBUG_ASSERT(frm_delete_error);
         }
+
+#ifdef TRUSTSQL_BUILD
+        path_length = build_table_filename(path, sizeof(path) - 1,
+        		 table->db.str, table->table_name.str, TRUSTSQL_CNF_FILE_EXT, 0);
+        if(!access(path,F_OK)) {
+        	my_delete(path, MYF(MY_WME));
+        }
+#endif
       }
 
       if (likely(!error))
@@ -2956,6 +2978,7 @@ bool Column_definition::prepare_stage2(handler *file,
                                        ulonglong table_flags)
 {
   DBUG_ENTER("Column_definition::prepare_stage2");
+  CLOG_FUNCTIOND("bool Column_definition::prepare_stage2(...)");
 
   /*
     This code came from mysql_prepare_create_table.
@@ -3022,6 +3045,8 @@ void promote_first_timestamp_column(List<Create_field> *column_definitions)
 {
   List_iterator_fast<Create_field> it(*column_definitions);
   Create_field *column_definition;
+  CLOG_FUNCTIOND("void promote_first_timestamp_column(List<Create_field> *column_definitions)");
+  CLOG_TPRINTLN("   Modifies the first column definition whose SQL type is TIMESTAMP by adding the features DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP.");
 
   while ((column_definition= it++) != NULL)
   {
@@ -3029,6 +3054,7 @@ void promote_first_timestamp_column(List<Create_field> *column_definitions)
         column_definition->unireg_check == Field::TIMESTAMP_OLD_FIELD) // Legacy
     {
       DBUG_PRINT("info", ("field-ptr:%p", column_definition->field));
+	  CLOG_TPRINTLN("info - field-ptr:%p", column_definition->field);
       if ((column_definition->flags & NOT_NULL_FLAG) != 0 && // NOT NULL,
           column_definition->default_value == NULL &&   // no constant default,
           column_definition->unireg_check == Field::NONE && // no function default
@@ -3040,6 +3066,11 @@ void promote_first_timestamp_column(List<Create_field> *column_definitions)
                             "CURRENT_TIMESTAMP",
                             column_definition->field_name.str
                             ));
+	    CLOG_TPRINTLN("info - First TIMESTAMP column '%s' was promoted to "
+                            "DEFAULT CURRENT_TIMESTAMP ON UPDATE "
+                            "CURRENT_TIMESTAMP",
+                            column_definition->field_name.str
+                            );
         column_definition->unireg_check= Field::TIMESTAMP_DNUN_FIELD;
       }
       return;
@@ -3350,7 +3381,7 @@ mysql_add_invisible_index(THD *thd, List<Key> *key_list,
     FALSE    OK
     TRUE     error
 */
-
+ 
 static int
 mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
                            Alter_info *alter_info, uint *db_options,
@@ -3371,6 +3402,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
   int select_field_count= C_CREATE_SELECT(create_table_mode);
   bool tmp_table= create_table_mode == C_ALTER_TABLE;
   DBUG_ENTER("mysql_prepare_create_table");
+  CLOG_FUNCTIOND("static int mysql_prepare_create_table(...)");
 
   DBUG_EXECUTE_IF("test_pseudo_invisible",{
           mysql_add_invisible_field(thd, &alter_info->create_list,
@@ -3390,6 +3422,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
                   , &temp, Key::MULTIPLE);
           });
   LEX_CSTRING* connect_string = &create_info->connect_string;
+  CLOG_TPRINTLN("connect_string = %s",connect_string->str);
   if (connect_string->length != 0 &&
       connect_string->length > CONNECT_STRING_MAXLEN &&
       (system_charset_info->cset->charpos(system_charset_info,
@@ -3410,6 +3443,8 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
   max_key_length= file->max_key_length();
 
   /* Handle creation of sequences */
+  CLOG_STEP("1","Handle Creation of Sequences");
+  CLOG_TPRINTLN("create_info->sequence = %d",create_info->sequence);
   if (create_info->sequence)
   {
     if (!(file->ha_table_flags() & HA_CAN_TABLES_WITHOUT_ROLLBACK))
@@ -3422,8 +3457,9 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     /* The user specified fields: check that structure is ok */
     if (check_sequence_fields(thd->lex, &alter_info->create_list))
       DBUG_RETURN(TRUE);
-  }
+  } 
 
+  CLOG_STEP("2","Field length , charset, null...");
   for (field_no=0; (sql_field=it++) ; field_no++)
   {
     /*
@@ -3431,17 +3467,23 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       which was set in the parser. This is necessary if we're
       executing a prepared statement for the second time.
     */
+    CLOG_TPRINTLN("---- for (field_no = %d ... )",field_no);
+	CLOG_TPRINTLN("field name = %s",sql_field->field_name.str);
     sql_field->length= sql_field->char_length;
+	CLOG_TPRINTLN("sql_field->length(0x%08X)= sql_field->char_length(0x%08X)",sql_field->length, sql_field->char_length);
     /* Set field charset. */
+	CLOG_STEP("2-1","Set field Charset");
     sql_field->charset= get_sql_field_charset(sql_field, create_info);
     if ((sql_field->flags & BINCMP_FLAG) &&
         !(sql_field->charset= find_bin_collation(sql_field->charset)))
       DBUG_RETURN(true);
 
     /* Virtual fields are always NULL */
+	CLOG_STEP("2-2","Virtual fields are always NULL");
     if (sql_field->vcol_info)
       sql_field->flags&= ~NOT_NULL_FLAG;
 
+	CLOG_STEP("2-3","prepare_stage1 (?)");
     if (sql_field->prepare_stage1(thd, thd->mem_root,
                                   file, file->ha_table_flags()))
       DBUG_RETURN(true);
@@ -3453,6 +3495,9 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     if (!(sql_field->flags & NOT_NULL_FLAG))
       null_fields++;
 
+	CLOG_TPRINTLN("null_fields = %d",null_fields);
+
+	CLOG_STEP("2-4","Check Column name");
     if (check_column_name(sql_field->field_name.str))
     {
       my_error(ER_WRONG_COLUMN_NAME, MYF(0), sql_field->field_name.str);
@@ -3460,6 +3505,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     }
 
     /* Check if we have used the same field name before */
+	CLOG_STEP("2-5","Check if we have used the same field name before");
     for (dup_no=0; (dup_field=it2++) != sql_field; dup_no++)
     {
       if (lex_string_cmp(system_charset_info,
@@ -3484,6 +3530,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
             If we are replacing a BIT field, revert the increment
             of total_uneven_bit_length that was done above.
           */
+       	  CLOG_STEP("2-6","Field Redefined...");
           if (sql_field->real_field_type() == MYSQL_TYPE_BIT &&
               file->ha_table_flags() & HA_CAN_BIT_FIELD)
             total_uneven_bit_length-= sql_field->length & 7;
@@ -3506,6 +3553,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       }
     }
     /* Don't pack rows in old tables if the user has requested this */
+	CLOG_STEP("3","Don't pack rows in old tables if the user has requested this");
     if ((sql_field->flags & BLOB_FLAG) ||
 	(sql_field->real_field_type() == MYSQL_TYPE_VARCHAR &&
          create_info->row_type != ROW_TYPE_FIXED))
@@ -3518,16 +3566,22 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
   null_fields+= total_uneven_bit_length;
 
   it.rewind();
+  CLOG_STEP("4","---- while(sql_field...)");
   while ((sql_field=it++))
   {
     DBUG_ASSERT(sql_field->charset != 0);
+	CLOG_STEP("4-1","prepare_stage2(?)");
     if (sql_field->prepare_stage2(file, file->ha_table_flags()))
       DBUG_RETURN(TRUE);
+	CLOG_STEP("4-2","varchar");
     if (sql_field->real_field_type() == MYSQL_TYPE_VARCHAR)
       create_info->varchar= TRUE;
     sql_field->offset= record_offset;
+	CLOG_STEP("4-3","type");
+	CLOG_TPRINTLN("sql_field->unireg_check = %d 0x%08X",sql_field->unireg_check,sql_field->unireg_check);
     if (MTYP_TYPENR(sql_field->unireg_check) == Field::NEXT_NUMBER)
       auto_increment++;
+	CLOG_STEP("4-4","parse_option_list");
     if (parse_option_list(thd, create_info->db_type, &sql_field->option_struct,
                           &sql_field->option_list,
                           create_info->db_type->field_options, FALSE,
@@ -3547,6 +3601,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
      All fields are invisible */
   bool is_all_invisible= true;
   it.rewind();
+  CLOG_STEP("5","Update virtual fields' offset and give error if all fields are invisible");
   while ((sql_field=it++))
   {
     if (!sql_field->stored_in_db())
@@ -3584,7 +3639,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     thd->lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_CREATE_SELECT_AUTOINC);
 
   /* Create keys */
-
+  CLOG_STEP("6","Create Keys");
   List_iterator<Key> key_iterator(alter_info->key_list);
   List_iterator<Key> key_iterator2(alter_info->key_list);
   uint key_parts=0, fk_key_count=0;
@@ -3596,15 +3651,24 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
   /* Calculate number of key segements */
   *key_count= 0;
-
+  CLOG_STEP("6-1","while(key...)");
   while ((key=key_iterator++))
   {
     DBUG_PRINT("info", ("key name: '%s'  type: %d", key->name.str ? key->name.str :
                         "(none)" , key->type));
+    CLOG_TPRINTLN("info -key name: '%s'  type: %d", key->name.str ? key->name.str : "(none)" , key->type);
     if (key->type == Key::FOREIGN_KEY)
     {
       fk_key_count++;
       Foreign_key *fk_key= (Foreign_key*) key;
+#ifdef TRUSTSQL_BUILD
+      List_iterator<Key_part_spec> ref_columns_iterator(fk_key->ref_columns);
+      Key_part_spec *ref_column;
+      CLOG_TPRINTLN("REF_TABLE_ARG=%s",fk_key->ref_table.str);
+      while((ref_column=ref_columns_iterator++)) {
+    	  CLOG_TPRINTLN("ref_column_name = %s",ref_column->field_name.str);
+      }
+#endif
       if (fk_key->validate(alter_info->create_list))
         DBUG_RETURN(TRUE);
       if (fk_key->ref_columns.elements &&
@@ -3674,6 +3738,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     my_error(ER_TOO_MANY_KEYS,MYF(0),tmp);
     DBUG_RETURN(TRUE);
   }
+  CLOG_STEP("6-2","calloc for Key");
 
   (*key_info_buffer)= key_info= (KEY*) thd->calloc(sizeof(KEY) * (*key_count));
   key_part_info=(KEY_PART_INFO*) thd->calloc(sizeof(KEY_PART_INFO)*key_parts);
@@ -3682,21 +3747,23 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
   key_iterator.rewind();
   key_number=0;
+  CLOG_STEP("6-3","---- for (key...)");
   for (; (key=key_iterator++) ; key_number++)
   {
     uint key_length=0;
     Key_part_spec *column;
-
+    CLOG_TPRINTLN("key->name.str = %s",key->name.str);
     if (key->name.str == ignore_key)
     {
-      /* ignore redundant keys */
+      /* ignore redundant keys */	  
       do
 	key=key_iterator++;
       while (key && key->name.str == ignore_key);
       if (!key)
 	break;
     }
-
+    CLOG_STEP("6-3-1","key->type");
+    CLOG_TPRINTLN("key type = %d (PRIMARY, UNIQUE, MULTIPLE, FULLTEXT, SPATIAL, FOREIGN_KEY)",key->type);
     switch (key->type) {
     case Key::MULTIPLE:
 	key_info->flags= 0;
@@ -3753,6 +3820,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
        in near future when new frm file is ready
        checking for proper key parts number:
     */
+    CLOG_STEP("6-3-2","Make SPATIAL to be RTREE by default SPATIAL only on BLOB or at least BINARY..");
 
     /* TODO: Add proper checks if handler supports key_type and algorithm */
     if (key_info->flags & HA_SPATIAL)
@@ -3791,6 +3859,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       TODO: Add warning if block size changes. We can't do it here, as
       this may depend on the size of the key
     */
+    CLOG_STEP("6-3-3","Take block size from key part or table part");
     key_info->block_size= (key->key_create_info.block_size ?
                            key->key_create_info.block_size :
                            create_info->key_block_size);
@@ -3810,10 +3879,12 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
 
     List_iterator<Key_part_spec> cols(key->columns), cols2(key->columns);
     CHARSET_INFO *ft_key_charset=0;  // for FULLTEXT
+    CLOG_STEP("6-3-4","---  for(column_nr...)");
     for (uint column_nr=0 ; (column=cols++) ; column_nr++)
     {
       Key_part_spec *dup_column;
-
+      CLOG_STEP("6-3-4-1","...");	
+	  CLOG_TPRINTLN("comumn_nr = %d",column_nr);
       it.rewind();
       field=0;
       while ((sql_field=it++) &&
@@ -4133,6 +4204,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     key_info++;
   }
 
+  CLOG_STEP("6-4","...?");
   if (!unique_key && !primary_key &&
       ((file->ha_table_flags() & HA_REQUIRE_PRIMARY_KEY) ||
        ((file->ha_table_flags() & HA_WANTS_PRIMARY_KEY) &&
@@ -4148,12 +4220,14 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
     DBUG_RETURN(TRUE);
   }
   /* Sort keys in optimized order */
+  CLOG_STEP("6-5","Sort keys in optimized order");
   my_qsort((uchar*) *key_info_buffer, *key_count, sizeof(KEY),
 	   (qsort_cmp) sort_keys);
   create_info->null_bits= null_fields;
 
   /* Check fields. */
   it.rewind();
+  CLOG_STEP("6-6","Check fields... ---- while(sql_field)...");
   while ((sql_field=it++))
   {
     Field::utype type= (Field::utype) MTYP_TYPENR(sql_field->unireg_check);
@@ -4163,6 +4237,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
       it is NOT NULL, not an AUTO_INCREMENT field, not a TIMESTAMP and not
       updated trough a NOW() function.
     */
+    CLOG_STEP("6-6-1","Set NO_DEFAULT_VALUE_FLAG....");
     if (!sql_field->default_value &&
         !sql_field->has_default_function() &&
         (sql_field->flags & NOT_NULL_FLAG) &&
@@ -4209,6 +4284,7 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
   }
 
   /* Check table level constraints */
+  CLOG_STEP("6-7","Check table level constraints");
   create_info->check_constraint_list= &alter_info->check_constraint_list;
   {
     uint nr= 1;
@@ -4259,11 +4335,17 @@ mysql_prepare_create_table(THD *thd, HA_CREATE_INFO *create_info,
                           file->engine_name()->str,
                           "TRANSACTIONAL=1");
 
+#ifdef TRUSTSQL_BUILD
+  if(thd->lex->create_info.is_Trusted()) {
+	 tldgr_parse_option_list(thd, &create_info->option_list);
+  }
+#endif
+
   if (parse_option_list(thd, file->partition_ht(), &create_info->option_struct,
-                          &create_info->option_list,
-                          file->partition_ht()->table_options, FALSE,
-                          thd->mem_root))
-      DBUG_RETURN(TRUE);
+                            &create_info->option_list,
+                            file->partition_ht()->table_options, FALSE,
+                            thd->mem_root))
+        DBUG_RETURN(TRUE);
 
   DBUG_RETURN(FALSE);
 }
@@ -4467,6 +4549,7 @@ handler *mysql_create_frm_image(THD *thd,
   uint		db_options;
   handler       *file;
   DBUG_ENTER("mysql_create_frm_image");
+  CLOG_FUNCTIOND("handler *mysql_create_frm_image(THD *thd ...)");
 
   if (!alter_info->create_list.elements)
   {
@@ -4474,15 +4557,20 @@ handler *mysql_create_frm_image(THD *thd,
     DBUG_RETURN(NULL);
   }
 
+  CLOG_STEP("1","Set Table Default Charset");
   set_table_default_charset(thd, create_info, db);
 
   db_options= create_info->table_options_with_row_type();
+  CLOG_TPRINTLN("db_options=0x%08X",db_options);
 
+  CLOG_STEP("2","get new handler");
   if (unlikely(!(file= get_new_handler((TABLE_SHARE*) 0, thd->mem_root,
                                        create_info->db_type))))
     DBUG_RETURN(NULL);
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
+  CLOG_STEP("3","Check Partition info");
+
   partition_info *part_info= thd->work_part_info;
 
   if (!part_info && create_info->db_type->partition_flags &&
@@ -4493,6 +4581,7 @@ handler *mysql_create_frm_image(THD *thd,
       all tables as partitioned. The handler will set up the partition info
       object with the default settings.
     */
+    CLOG_STEP("3-1","Table is not defined as a partioned table...");
     thd->work_part_info= part_info= new partition_info();
     if (unlikely(!part_info))
       goto err;
@@ -4511,6 +4600,7 @@ handler *mysql_create_frm_image(THD *thd,
       this information in the default_db_type variable, it is either
       DB_TYPE_DEFAULT or the engine set in the ALTER TABLE command.
     */
+    CLOG_STEP("3-2","The table has been specified as a partitioned table. if this.... ");
     handlerton *part_engine_type= create_info->db_type;
     char *part_syntax_buf;
     uint syntax_len;
@@ -4588,6 +4678,9 @@ handler *mysql_create_frm_image(THD *thd,
     DBUG_PRINT("info", ("db_type = %s create_info->db_type = %s",
              ha_resolve_storage_engine_name(part_info->default_engine_type),
              ha_resolve_storage_engine_name(create_info->db_type)));
+	CLOG_TPRINTLN("info - db_type = %s create_info->db_type = %s",
+             ha_resolve_storage_engine_name(part_info->default_engine_type),
+             ha_resolve_storage_engine_name(create_info->db_type));
     if (part_info->check_partition_info(thd, &engine_type, file,
                                         create_info, FALSE))
       goto err;
@@ -4622,6 +4715,8 @@ handler *mysql_create_frm_image(THD *thd,
       */
       DBUG_PRINT("info", ("db_type: %s",
                         ha_resolve_storage_engine_name(create_info->db_type)));
+	  CLOG_TPRINTLN("info - db_type: %s",
+                        ha_resolve_storage_engine_name(create_info->db_type));
       delete file;
       create_info->db_type= partition_hton;
       if (!(file= get_ha_partition(part_info)))
@@ -4676,6 +4771,7 @@ handler *mysql_create_frm_image(THD *thd,
     If storage engine handles partitioning natively (like NDB)
     foreign keys support is possible, so we let the engine decide.
   */
+  CLOG_STEP("4","partition_hton");
   if (create_info->db_type == partition_hton)
   {
     List_iterator_fast<Key> key_iterator(alter_info->key_list);
@@ -4690,24 +4786,26 @@ handler *mysql_create_frm_image(THD *thd,
     }
   }
 #endif
-
+  CLOG_STEP("5","versioned()?");
   if (create_info->versioned())
   {
     if(vers_prepare_keys(thd, create_info, alter_info, key_info,
                                 *key_count))
       goto err;
   }
-
+  CLOG_STEP("6","prepare create table");
   if (mysql_prepare_create_table(thd, create_info, alter_info, &db_options,
                                  file, key_info, key_count,
                                  create_table_mode))
     goto err;
   create_info->table_options=db_options;
-
+  CLOG_STEP("7","build_frm_image");
   *frm= build_frm_image(thd, table_name, create_info,
                         alter_info->create_list, *key_count,
                         *key_info, file);
 
+  CLOG_TPRINTLN("Final Frm ??");
+  CLOG_DISPBUFFER(frm->str,frm->length);
   if (frm->str)
     DBUG_RETURN(file);
 
@@ -4771,9 +4869,19 @@ int create_table_impl(THD *thd,
   int		error= 1;
   bool          frm_only= create_table_mode == C_ALTER_TABLE_FRM_ONLY;
   bool          internal_tmp_table= create_table_mode == C_ALTER_TABLE || frm_only;
+
+#ifdef TRUSTSQL_BUILD
+  LEX_CUSTRING tld_image= {0,0};
+#endif
+
   DBUG_ENTER("mysql_create_table_no_lock");
   DBUG_PRINT("enter", ("db: '%s'  table: '%s'  tmp: %d  path: %s",
                        db->str, table_name->str, internal_tmp_table, path));
+  CLOG_TPRINTLN("----------------------------------------------------------");
+  CLOG_FUNCTIOND("static int create_table_impl(....)");
+  CLOG_TPRINTLN("enter - db: '%s'  table: '%s'  tmp: %d  path: %s",
+          db->str, table_name->str, internal_tmp_table, path);
+  CLOG_TPRINTLN("----------------------------------------------------------");
 
   if (thd->variables.sql_mode & MODE_NO_DIR_IN_CREATE)
   {
@@ -4800,14 +4908,18 @@ int create_table_impl(THD *thd,
   }
 
   alias= const_cast<LEX_CSTRING*>(table_case_name(create_info, table_name));
-
+  CLOG_STEP("1","alias");
+  CLOG_TPRINTLN("alias = %s",alias->str);
+  
   /* Check if table exists */
+  CLOG_STEP("2","Check if table exists");
   if (create_info->tmp_table())
   {
     /*
       If a table exists, it must have been pre-opened. Try looking for one
       in-use in THD::all_temp_tables list of TABLE_SHAREs.
     */
+    CLOG_STEP("2-1","Check if table exists - temporary");
     TABLE *tmp_table= thd->find_temporary_table(db->str, table_name->str);
 
     if (tmp_table)
@@ -4843,8 +4955,11 @@ int create_table_impl(THD *thd,
   }
   else
   {
+    CLOG_STEP("2-1","Check if table exists - normal");
     if (!internal_tmp_table && ha_table_exists(thd, db, table_name))
     {
+      CLOG_TPRINTLN(" DB=%s TABLE=%s is ALREADY EXISTED!!");
+
       if (options.or_replace())
       {
         (void) delete_statistics_for_table(thd, db, table_name);
@@ -4892,13 +5007,17 @@ int create_table_impl(THD *thd,
   }
 
   THD_STAGE_INFO(thd, stage_creating_table);
-
+  CLOG_STEP("2-2","Check engine");
   if (check_engine(thd, orig_db->str, orig_table_name->str, create_info))
     goto err;
 
+  CLOG_STEP("2-3","Create Table");
+  CLOG_TPRINTLN("Assisted mode = 0x%08X",create_table_mode);
+
   if (create_table_mode == C_ASSISTED_DISCOVERY)
-  {
+  { 
     /* check that it's used correctly */
+	CLOG_STEP("2-3-1","C_ASSISTED_DISCOVERY");
     DBUG_ASSERT(alter_info->create_list.elements == 0);
     DBUG_ASSERT(alter_info->key_list.elements == 0);
 
@@ -4945,6 +5064,8 @@ int create_table_impl(THD *thd,
   }
   else
   {
+    CLOG_STEP("2-3-2","!C_ASSISTED_DISCOVERY, mysql_create_frm_mage !!");
+
     file= mysql_create_frm_image(thd, orig_db, orig_table_name, create_info,
                                  alter_info, create_table_mode, key_info,
                                  key_count, frm);
@@ -4955,11 +5076,34 @@ int create_table_impl(THD *thd,
     */
     if (!file || thd->is_error())
       goto err;
+
+#ifdef TRUSTSQL_BUILD
+    //if(thd->lex->create_info.is_Trusted()) {
+    if(frm->str[TRUSTSQL_FLAG_OFFSET]=='T') {
+		if(tldgr_create_tld_image(thd, orig_db, orig_table_name, alter_info->create_list, key_info, key_count, &tld_image))
+			goto err;
+    }
+    //my_free(const_cast<uchar*>(tld_image.str));
+#endif
+
+    CLOG_STEP("2-3-3","rea_create_table!");
+#ifdef TRUSTSQL_BUILD
+    if(frm->str[TRUSTSQL_FLAG_OFFSET]=='T') {
+    	if (rea_create_trusted_table(thd, frm, &tld_image, path, db->str, table_name->str, create_info,
+    	                         file, frm_only))
+    	      goto err;
+    } else {
+    	if (rea_create_table(thd, frm, path, db->str, table_name->str, create_info,
+    	                         file, frm_only))
+    	     goto err;
+    }
+#else
     if (rea_create_table(thd, frm, path, db->str, table_name->str, create_info,
                          file, frm_only))
       goto err;
-  }
+#endif
 
+  }
   create_info->table= 0;
   if (!frm_only && create_info->tmp_table())
   {
@@ -4995,6 +5139,7 @@ int create_table_impl(THD *thd,
     */
     TABLE table;
     TABLE_SHARE share;
+    CLOG_STEP("2-4","For partitioned tables we can't find some problems ....");
 
     init_tmp_table_share(thd, &share, db->str, 0, table_name->str, path);
 
@@ -5019,6 +5164,9 @@ int create_table_impl(THD *thd,
   
   error= 0;
 err:
+#ifdef TRUSTSQL_BUILD
+  my_free(const_cast<uchar*>(tld_image.str));
+#endif
   THD_STAGE_INFO(thd, stage_after_create);
   delete file;
   DBUG_PRINT("exit", ("return: %d", error));
@@ -5057,7 +5205,10 @@ int mysql_create_table_no_lock(THD *thd,
   int res;
   char path[FN_REFLEN + 1];
   LEX_CUSTRING frm= {0,0};
+  CLOG_FUNCTIOND("int mysql_create_table_no_lock(...)");
+  CLOG_TPRINTLN("Simple wrapper around create_table_impl() to be used in various version of CREATE TABLE statement.");
 
+  CLOG_STEP("1","build path");
   if (create_info->tmp_table())
     build_tmptable_filename(thd, path, sizeof(path));
   else
@@ -5073,13 +5224,14 @@ int mysql_create_table_no_lock(THD *thd,
       return true;
     }
   }
-
+  CLOG_TPRINTLN(" path = %s",path);
+  CLOG_STEP("2","create table !");
   res= create_table_impl(thd, db, table_name, db, table_name, path,
                          *create_info, create_info,
                          alter_info, create_table_mode,
                          is_trans, &not_used_1, &not_used_2, &frm);
   my_free(const_cast<uchar*>(frm.str));
-
+  CLOG_TPRINTLN(" res = %d",res);
   if (!res && create_info->sequence)
   {
     /* Set create_info.table if temporary table */
@@ -5131,14 +5283,18 @@ bool mysql_create_table(THD *thd, TABLE_LIST *create_table,
   TABLE_LIST *pos_in_locked_tables= 0;
   MDL_ticket *mdl_ticket= 0;
   DBUG_ENTER("mysql_create_table");
+  CLOG_FUNCTIOND("bool mysql_create_table(...)");
+  CLOG_TPRINTLN("Implementation of SQLCOM_CREATE_TABLE.");
 
   DBUG_ASSERT(create_table == thd->lex->query_tables);
 
   /* Copy temporarily the statement flags to thd for lock_table_names() */
+  CLOG_STEP("1", "Copy  temporarily the statement flags to thd for lock_table_names()");
   uint save_thd_create_info_options= thd->lex->create_info.options;
   thd->lex->create_info.options|= create_info->options;
 
   /* Open or obtain an exclusive metadata lock on table being created  */
+  CLOG_STEP("2", "Open or obtain an exclusive metadata lock on table being created");
   result= open_and_lock_tables(thd, *create_info, create_table, FALSE, 0);
 
   thd->lex->create_info.options= save_thd_create_info_options;
@@ -5156,6 +5312,7 @@ bool mysql_create_table(THD *thd, TABLE_LIST *create_table,
   }
   
   /* Got lock. */
+  CLOG_STEP("3","Got lock");
   DEBUG_SYNC(thd, "locked_table_name");
 
   if (alter_info->create_list.elements || alter_info->key_list.elements)
@@ -5163,9 +5320,11 @@ bool mysql_create_table(THD *thd, TABLE_LIST *create_table,
   else
     create_table_mode= C_ASSISTED_DISCOVERY;
 
-  if (!opt_explicit_defaults_for_timestamp)
+  if (!opt_explicit_defaults_for_timestamp) {
+    CLOG_STEP("4","timestamp_column");	
     promote_first_timestamp_column(&alter_info->create_list);
-
+  }
+  CLOG_STEP("5","mysql_create_table_no_lock");
   if (mysql_create_table_no_lock(thd, &create_table->db,
                                  &create_table->table_name, create_info,
                                  alter_info,
@@ -5305,6 +5464,7 @@ static void make_unique_constraint_name(THD *thd, LEX_CSTRING *name,
 {
   char buff[MAX_FIELD_NAME], *end;
   List_iterator_fast<Virtual_column_info> it(*vcol);
+  CLOG_FUNCTIOND("static void make_unique_constraint_name(...)");
 
   end=strmov(buff, "CONSTRAINT_");
   for (;;)
@@ -10831,6 +10991,8 @@ bool check_engine(THD *thd, const char *db_name,
                   const char *table_name, HA_CREATE_INFO *create_info)
 {
   DBUG_ENTER("check_engine");
+  CLOG_FUNCTIOND("bool check_engine(THD *thd, const char *db_name,const char *table_name, HA_CREATE_INFO *create_info)");
+  CLOG_TPRINTLN("Check if the table can be created in the specified storage engine");
   handlerton **new_engine= &create_info->db_type;
   handlerton *req_engine= *new_engine;
   handlerton *enf_engine= NULL;

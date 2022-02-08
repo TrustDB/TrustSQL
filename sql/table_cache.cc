@@ -45,11 +45,11 @@
   - TABLE_SHARE::free_tables shall not receive new objects if
     TABLE_SHARE::tdc.flushed is true
 */
-
 #include "mariadb.h"
 #include "lf.h"
 #include "table.h"
 #include "sql_base.h"
+#include "clog.h"
 
 
 /** Configuration. */
@@ -354,6 +354,8 @@ void tc_purge(bool mark_flushed)
 
 void tc_add_table(THD *thd, TABLE *table)
 {
+  CLOG_FUNCTIOND("void tc_add_table(THD *thd, TABLE *table)");
+  CLOG_TPRINTLN("Add new TABLE object to table cache..");
   uint32 i= thd->thread_id % my_atomic_load32_explicit((int32*) &tc_active_instances,
                                                        MY_MEMORY_ORDER_RELAXED);
   TABLE *LRU_table= 0;
@@ -414,6 +416,9 @@ static TABLE *tc_acquire_table(THD *thd, TDC_element *element)
   uint32 i= thd->thread_id % n_instances;
   TABLE *table;
 
+  CLOG_FUNCTIOND("static TABLE *tc_acquire_table(THD *thd, TDC_element *element)");
+  CLOG_TPRINTLN("Acquire TABLE object from table cache.");
+
   tc[i].lock_and_check_contention(n_instances, i);
   table= element->free_tables[i].list.pop_front();
   if (table)
@@ -425,6 +430,7 @@ static TABLE *tc_acquire_table(THD *thd, TDC_element *element)
     /* The children must be detached from the table. */
     DBUG_ASSERT(!table->file->extra(HA_EXTRA_IS_ATTACHED_CHILDREN));
     tc[i].free_tables.remove(table);
+	CLOG_TPRINTLN("Acquired Table Name = %s.%s", table->s->db.str,table->s->table_name.str);
   }
   mysql_mutex_unlock(&tc[i].LOCK_table_cache);
   return table;
@@ -809,15 +815,21 @@ TABLE_SHARE *tdc_acquire_share(THD *thd, TABLE_LIST *tl, uint flags,
   my_hash_value_type hash_value= tl->mdl_request.key.tc_hash_value();
   bool was_unused;
   DBUG_ENTER("tdc_acquire_share");
+  CLOG_TPRINTLN("-----------------------------------------------------");
+  CLOG_FUNCTIOND("TABLE_SHARE *tdc_acquire_share(THD *thd, TABLE_LIST *tl, uint flags,TABLE **out_table)");
+  CLOG_TPRINTLN("Get TABLE_SHARE for a table.");
 
   if (fix_thd_pins(thd))
     DBUG_RETURN(0);
 
 retry:
+  CLOG_STEP("1","Seach element by key");
   while (!(element= (TDC_element*) lf_hash_search_using_hash_value(&tdc_hash,
                     thd->tdc_hash_pins, hash_value, (uchar*) key, key_length)))
   {
-    LEX_STRING tmp= { const_cast<char*>(key), key_length };
+	LEX_STRING tmp= { const_cast<char*>(key), key_length };
+	CLOG_STEP("1-1","while( element...)");
+	CLOG_TPRINTLN("key = %s",tmp.str);
     int res= lf_hash_insert(&tdc_hash, thd->tdc_hash_pins, (uchar*) &tmp);
 
     if (res == -1)
@@ -829,7 +841,8 @@ retry:
              thd->tdc_hash_pins, hash_value, (uchar*) key, key_length);
     lf_hash_search_unpin(thd->tdc_hash_pins);
     DBUG_ASSERT(element);
-
+	
+	CLOG_STEP("1-2","alloc_table_share(..)");
     if (!(share= alloc_table_share(tl->db.str, tl->table_name.str, key, key_length)))
     {
       lf_hash_delete(&tdc_hash, thd->tdc_hash_pins, key, key_length);
@@ -837,6 +850,7 @@ retry:
     }
 
     /* note that tdc_acquire_share() *always* uses discovery */
+	CLOG_STEP("1-3","open table def ~");
     open_table_def(thd, share, flags | GTS_USE_DISCOVERY);
 
     if (checked_unlikely(share->error))
@@ -866,6 +880,8 @@ retry:
 
   /* cannot force discovery of a cached share */
   DBUG_ASSERT(!(flags & GTS_FORCE_DISCOVERY));
+
+  CLOG_STEP("2","Acquire table !");
 
   if (out_table && (flags & GTS_TABLE))
   {
@@ -962,6 +978,8 @@ err:
 void tdc_release_share(TABLE_SHARE *share)
 {
   DBUG_ENTER("tdc_release_share");
+  CLOG_FUNCTIOND("void tdc_release_share(TABLE_SHARE *share)");
+  CLOG_TPRINTLN("Release table share acquired by tdc_acquire_share().");
 
   mysql_mutex_lock(&share->tdc->LOCK_table_share);
   DBUG_PRINT("enter",
@@ -998,6 +1016,7 @@ void tdc_release_share(TABLE_SHARE *share)
   }
   /* Link share last in used_table_share list */
   DBUG_PRINT("info", ("moving share to unused list"));
+  CLOG_TPRINTLN("info - moving share to unused list");
   DBUG_ASSERT(share->tdc->next == 0);
   unused_shares.push_back(share->tdc);
   mysql_mutex_unlock(&share->tdc->LOCK_table_share);
@@ -1096,6 +1115,9 @@ bool tdc_remove_table(THD *thd, enum_tdc_remove_table_type remove_type,
   uint my_refs= 1;
   DBUG_ENTER("tdc_remove_table");
   DBUG_PRINT("enter",("name: %s  remove_type: %d", table_name, remove_type));
+  CLOG_FUNCTIOND("bool tdc_remove_table(THD *thd, enum_tdc_remove_table_type remove_type,...");
+  CLOG_PRINTLN("Remove all or some instances of TABLE and TABLE_SHARE from the table definition cache.");
+  CLOG_TPRINTLN("name: %s  remove_type: %d", table_name, remove_type);
 
   DBUG_ASSERT(remove_type == TDC_RT_REMOVE_UNUSED ||
               thd->mdl_context.is_lock_owner(MDL_key::TABLE, db, table_name,

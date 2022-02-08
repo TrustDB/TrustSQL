@@ -19,6 +19,7 @@
 
 
 #include <mysql_version.h>                      /* FRM_VER */
+#include "clog.h"
 
 /*  Extra functions used by unireg library */
 
@@ -43,7 +44,11 @@
 #define PLUGINDIR	"lib/plugin"
 #endif
 
+#ifdef TLEDGER_BUILD123
+#define MAX_ERROR_RANGES 5  /* 1000-2000, 2000-3000, 3000-4000, 4000-5000 5000-6000(TRUST)*/
+#else
 #define MAX_ERROR_RANGES 4  /* 1000-2000, 2000-3000, 3000-4000, 4000-5000 */
+#endif
 #define ERRORS_PER_RANGE 1000
 
 #define DEFAULT_ERRMSGS           my_default_lc_messages->errmsgs->errmsgs
@@ -191,6 +196,15 @@ int rea_create_table(THD *thd, LEX_CUSTRING *frm,
                      const char *path, const char *db, const char *table_name,
                      HA_CREATE_INFO *create_info, handler *file,
                      bool no_ha_create_table);
+
+#ifdef TRUSTSQL_BUILD
+int rea_create_trusted_table(THD *thd, LEX_CUSTRING *frm, LEX_CUSTRING *tld,
+                     const char *path, const char *db, const char *table_name,
+                     HA_CREATE_INFO *create_info, handler *file,
+                     bool no_ha_create_table);
+#endif
+
+
 LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
                              HA_CREATE_INFO *create_info,
                              List<Create_field> &create_fields,
@@ -198,12 +212,24 @@ LEX_CUSTRING build_frm_image(THD *thd, const LEX_CSTRING *table,
 
 #define FRM_HEADER_SIZE 64
 #define FRM_FORMINFO_SIZE 288
+#ifdef TLEDGER_BUILD11
+#define FRM_MAX_SIZE (512*1152) // add 512*128 bytes
+#else
 #define FRM_MAX_SIZE (512*1024)
+#endif
 
 static inline bool is_binary_frm_header(uchar *head)
 {
   return head[0] == 254
       && head[1] == 1
+      && head[2] >= FRM_VER
+      && head[2] <= FRM_VER_CURRENT;
+}
+
+static inline bool is_binary_trusted_frm_header(uchar *head)
+{
+  return head[0] == 254
+      && head[1] == 'T'
       && head[2] >= FRM_VER
       && head[2] <= FRM_VER_CURRENT;
 }

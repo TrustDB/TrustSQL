@@ -25,6 +25,7 @@
 #include "sql_priv.h"
 #include "sql_manager.h"
 #include "sql_base.h"                           // flush_tables
+#include "clog.h"
 
 static bool volatile manager_thread_in_use;
 static bool abort_manager;
@@ -135,6 +136,7 @@ pthread_handler_t handle_manager(void *arg __attribute__((unused)))
 /* Start handle manager thread */
 void start_handle_manager()
 {
+  CLOG_FUNCTIOND("void start_handle_manager()");
   DBUG_ENTER("start_handle_manager");
   abort_manager = false;
   if (flush_time && flush_time != ~(ulong) 0L)

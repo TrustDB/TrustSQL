@@ -18,6 +18,7 @@
 /* A lexical scanner on a temporary buffer with a yacc interface */
 
 #define MYSQL_LEX 1
+#include "clog.h"
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_class.h"                          // sql_lex.h: SQLCOM_END
@@ -184,6 +185,7 @@ init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex)
     do this by using add_table_to_list where we add the table that
     we're working with to the Name_resolution_context.
   */
+  CLOG_FUNCTIOND("int init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex)");
   thd->lex= lex;
   lex_start(thd);
   context->init();
@@ -653,6 +655,8 @@ void LEX::start(THD *thd_arg)
 {
   DBUG_ENTER("LEX::start");
   DBUG_PRINT("info", ("This: %p thd_arg->lex: %p", this, thd_arg->lex));
+  CLOG_FUNCTIOND("void LEX::start(THD *thd_arg)");
+  CLOG_TPRINTLN("info - This: %p thd_arg->lex: %p", this, thd_arg->lex);
 
   thd= unit.thd= thd_arg;
   stmt_lex= this; // default, should be rewritten for VIEWs And CTEs
@@ -1419,6 +1423,7 @@ int Lex_input_stream::lex_one_token(YYSTYPE *yylval, THD *thd)
       /* Start of real token */
       restart_token();
       c= yyGet();
+      //ZLOG_TPRINTLN("c=yyget() -> %c %d",c,c);
       state= (enum my_lex_states) state_map[c];
       break;
     case MY_LEX_ESCAPE:
@@ -4373,6 +4378,8 @@ void SELECT_LEX::update_used_tables()
 {
   TABLE_LIST *tl;
   List_iterator<TABLE_LIST> ti(leaf_tables);
+  CLOG_FUNCTIOND("void SELECT_LEX::update_used_tables()");
+  CLOG_TPRINTLN("Update used_tables cache for this select");
 
   while ((tl= ti++))
   {
@@ -5167,6 +5174,7 @@ SELECT_LEX *LEX::exclude_last_select()
 bool LEX::add_unit_in_brackets(SELECT_LEX *nselect)
 {
   DBUG_ENTER("LEX::add_unit_in_brackets");
+  CLOG_FUNCTIOND("bool LEX::add_unit_in_brackets(SELECT_LEX *nselect)");
   bool distinct= nselect->master_unit()->union_distinct == nselect;
   bool rc= add_select_to_union_list(distinct, nselect->linkage, 0);
   if (rc)
@@ -6890,6 +6898,7 @@ my_var *LEX::create_outvar(THD *thd,
 Item *LEX::create_item_func_nextval(THD *thd, Table_ident *table_ident)
 {
   TABLE_LIST *table;
+  CLOG_FUNCTIOND("Item *LEX::create_item_func_nextval(THD *thd, Table_ident *table_ident)");
   if (unlikely(!(table= current_select->add_table_to_list(thd, table_ident, 0,
                                                           TL_OPTION_SEQUENCE,
                                                           TL_WRITE_ALLOW_WRITE,
@@ -6903,6 +6912,7 @@ Item *LEX::create_item_func_nextval(THD *thd, Table_ident *table_ident)
 Item *LEX::create_item_func_lastval(THD *thd, Table_ident *table_ident)
 {
   TABLE_LIST *table;
+  CLOG_FUNCTIOND("Item *LEX::create_item_func_lastval(THD *thd, Table_ident *table_ident)");
   if (unlikely(!(table= current_select->add_table_to_list(thd, table_ident, 0,
                                                           TL_OPTION_SEQUENCE,
                                                           TL_READ,
@@ -6942,6 +6952,7 @@ Item *LEX::create_item_func_setval(THD *thd, Table_ident *table_ident,
                                    bool is_used)
 {
   TABLE_LIST *table;
+  CLOG_FUNCTIOND("Item *LEX::create_item_func_setval(THD *thd, Table_ident *table_ident,...)");
   if (unlikely(!(table= current_select->add_table_to_list(thd, table_ident, 0,
                                                           TL_OPTION_SEQUENCE,
                                                           TL_WRITE_ALLOW_WRITE,
@@ -7099,6 +7110,9 @@ bool LEX::set_user_variable(THD *thd, const LEX_CSTRING *name, Item *val)
 {
   Item_func_set_user_var *item;
   set_var_user *var;
+  CLOG_FUNCTIOND("bool LEX::set_user_variable(THD *thd, const LEX_CSTRING *name, Item *val)");
+  CLOG_TPRINTLN("name = %s",name->str);
+  CLOG_TPRINTLN("val  = %s",val->val_str()->ptr());
   if (unlikely(!(item= new (thd->mem_root) Item_func_set_user_var(thd, name,
                                                                   val))) ||
       unlikely(!(var= new (thd->mem_root) set_var_user(item))))

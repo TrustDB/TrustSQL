@@ -16,7 +16,6 @@
 
 
 /* Function with list databases, tables or fields */
-
 #include "sql_plugin.h"                         // SHOW_MY_BOOL
 #include "sql_priv.h"
 #include "unireg.h"
@@ -50,6 +49,8 @@
 #include "authors.h"
 #include "contributors.h"
 #include "sql_partition.h"
+
+#include "clog.h"
 #ifdef HAVE_EVENT_SCHEDULER
 #include "events.h"
 #include "event_data_objects.h"
@@ -1242,6 +1243,8 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
   DBUG_ENTER("mysqld_show_create_get_fields");
   DBUG_PRINT("enter",("db: %s  table: %s",table_list->db.str,
                       table_list->table_name.str));
+  CLOG_FUNCTIOND("bool mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,...");
+  CLOG_TPRINTLN("Return metadata for CREATE command for table or view");
 
   /* We want to preserve the tree for views. */
   thd->lex->context_analysis_only|= CONTEXT_ANALYSIS_ONLY_VIEW;
@@ -1256,6 +1259,7 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
     uint counter;
     Show_create_error_handler view_error_suppressor(thd, table_list);
     thd->push_internal_handler(&view_error_suppressor);
+	CLOG_STEP("1","call open_tables()");
     bool open_error=
       open_tables(thd, &table_list, &counter,
                   MYSQL_OPEN_FORCE_SHARED_HIGH_PRIO_MDL) ||
@@ -1284,6 +1288,8 @@ mysqld_show_create_get_fields(THD *thd, TABLE_LIST *table_list,
 
   if (table_list->view)
     buffer->set_charset(table_list->view_creation_ctx->get_client_cs());
+
+  CLOG_STEP("2","show_create_view/sequence/table");
 
   if ((table_list->view ?
        show_create_view(thd, table_list, buffer) :
@@ -1355,14 +1361,19 @@ mysqld_show_create(THD *thd, TABLE_LIST *table_list)
   DBUG_PRINT("enter",("db: %s  table: %s",table_list->db.str,
                       table_list->table_name.str));
 
+  CLOG_FUNCTIOND("bool mysqld_show_create(THD *thd, TABLE_LIST *table_list)");
+  CLOG_TPRINTLN("enter - : %s  table: %s",table_list->db.str,table_list->table_name.str);
+
   /*
     Metadata locks taken during SHOW CREATE should be released when
     the statmement completes as it is an information statement.
   */
+  CLOG_STEP("1","Metadata locks taken durint SHOW create should be released ...");
   MDL_savepoint mdl_savepoint= thd->mdl_context.mdl_savepoint();
 
   TABLE_LIST archive;
 
+  CLOG_STEP("2","Show create field !!");
   if (mysqld_show_create_get_fields(thd, table_list, &field_list, &buffer))
     goto exit;
 
@@ -1842,6 +1853,7 @@ static void append_create_options(THD *thd, String *packet,
                                   ha_create_table_option *rules)
 {
   bool in_comment= false;
+  CLOG_FUNCTIOND("static void append_create_options(THD *thd, String *packet,..");
   for(; opt; opt= opt->next)
   {
     if (check_options)
@@ -1868,6 +1880,7 @@ static void append_create_options(THD *thd, String *packet,
       append_unescaped(packet, opt->value.str, opt->value.length);
     else
       packet->append(&opt->value);
+	CLOG_TPRINTLN(" Add option = %s",packet->c_ptr());
   }
   if (in_comment)
     packet->append(STRING_WITH_LEN(" */"));
@@ -1892,6 +1905,8 @@ static void add_table_options(THD *thd, TABLE *table,
   HA_CREATE_INFO create_info;
   bool check_options= (!(sql_mode & MODE_IGNORE_BAD_TABLE_OPTIONS) &&
                        !create_info_arg);
+  CLOG_FUNCTIOND("static void add_table_options(THD *thd, TABLE *table,...");
+  CLOG_TPRINTLN("Add table options to end of CREATE statement..");
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (table->part_info)
@@ -2044,6 +2059,8 @@ end_options:
                         hton->table_options);
   append_directory(thd, packet, "DATA",  create_info.data_file_name);
   append_directory(thd, packet, "INDEX", create_info.index_file_name);
+
+  CLOG_TPRINTLN("Add table Options = %s", packet->c_ptr());
 }
 
 /*
@@ -2101,6 +2118,10 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
   DBUG_ENTER("show_create_table");
   DBUG_PRINT("enter",("table: %s", table->s->table_name.str));
 
+  CLOG_FUNCTIOND("int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,..");
+  CLOG_TPRINTLN("Build a CREATE TABLE statement for a table.");
+  CLOG_TPRINTLN("enter - table: %s", table->s->table_name.str);
+
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (table->part_info)
     hton= table->part_info->default_engine_type;
@@ -2108,9 +2129,19 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
 #endif
     hton= table->file->ht;
 
+  CLOG_STEP("1","restore_record() with default value");
   restore_record(table, s->default_values); // Get empty record
 
   packet->append(STRING_WITH_LEN("CREATE "));
+
+#ifdef TRUSTSQL_BUILD
+  if(share->trusted_table_type==1) 
+	packet->append(STRING_WITH_LEN("TRUSTED "));  		
+  else if(share->trusted_table_type==2) 
+    packet->append(STRING_WITH_LEN("TRUSTED ORDERED "));		  
+#endif
+
+  
   if (create_info_arg &&
       ((create_info_arg->or_replace() &&
         !create_info_arg->or_replace_slave_generated()) ||
@@ -2157,6 +2188,8 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
 
   append_identifier(thd, packet, &alias);
   packet->append(STRING_WITH_LEN(" (\n"));
+  CLOG_STEP("2","first line");
+  CLOG_TPRINTLN("\n%s",packet->c_ptr());
   /*
     We need this to get default values from the table
     We have to restore the read_set if we are called from insert in case
@@ -2165,6 +2198,7 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
   old_map= tmp_use_all_columns(table, table->read_set);
 
   bool not_the_first_field= false;
+  CLOG_STEP("3","field gogo !");
   for (ptr=table->field ; (field= *ptr); ptr++)
   {
 
@@ -2179,6 +2213,7 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     packet->append(STRING_WITH_LEN("  "));
     append_identifier(thd, packet, &field->field_name);
     packet->append(' ');
+	CLOG_TPRINTLN("field name = %s",field->field_name.str);
 
     type.set(tmp, sizeof(tmp), system_charset_info);
     field->sql_type(type);
@@ -2261,6 +2296,8 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
       if (field->unireg_check == Field::NEXT_NUMBER &&
           !(sql_mode & MODE_NO_FIELD_OPTIONS))
         packet->append(STRING_WITH_LEN(" AUTO_INCREMENT"));
+
+  	  CLOG_TPRINTLN("Field %d Added \n%s",packet->c_ptr());
     }
     if (field->check_constraint)
     {
@@ -2269,20 +2306,24 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
       packet->append(STRING_WITH_LEN(" CHECK ("));
       packet->append(str);
       packet->append(STRING_WITH_LEN(")"));
+  	  CLOG_TPRINTLN("add Check constraint = %s",packet->c_ptr());
     }
 
     if (field->comment.length)
     {
       packet->append(STRING_WITH_LEN(" COMMENT "));
       append_unescaped(packet, field->comment.str, field->comment.length);
+  	  CLOG_TPRINTLN("add Comment = %s",packet->c_ptr());
     }
     append_create_options(thd, packet, field->option_list, check_options,
                           hton->field_options);
+	CLOG_TPRINTLN("After some create options \n%s",packet->c_ptr());
   }
 
   key_info= table->key_info;
   primary_key= share->primary_key;
 
+  CLOG_STEP("4","KEY gogo !");
   for (uint i=0 ; i < share->keys ; i++,key_info++)
   {
     if (key_info->flags & HA_INVISIBLE_KEY)
@@ -2345,6 +2386,7 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     }
     append_create_options(thd, packet, key_info->option_list, check_options,
                           hton->index_options);
+	CLOG_TPRINTLN("After Key added \n%s",packet->c_ptr());
   }
 
   if (table->versioned())
@@ -2380,6 +2422,7 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     packet->append(for_str, strlen(for_str));
     table->file->free_foreign_key_create_info(for_str);
   }
+  CLOG_TPRINTLN("add Foreign Key from InnoDB = \n%s",packet->c_ptr());
 
   /* Add table level check constraints */
   if (share->table_check_constraints)
@@ -2403,7 +2446,49 @@ int show_create_table(THD *thd, TABLE_LIST *table_list, String *packet,
     }
   }
 
+#ifdef TRUSTSQL_BUILD
+    if(share->trusted_table_type!=0) {
+    	CLOG_STEP("X","Trusted Table !!!");
+    	Table_trust_options *t_options = share->trust_options;
+    	Sig_field_info *sfinfo = t_options->sig_field_info_list;
+    	LEX_CSTRING *input_field;
+    	for(uint i=0; i<t_options->sig_field_infos_no; i++, sfinfo++) {
+    		packet->append(STRING_WITH_LEN(",\n  "));
+    		packet->append(STRING_WITH_LEN("CONSTRAINT "));
+    		CLOG_TPRINTLN("sig name =%s",sfinfo->sig_name.str);
+    		append_identifier(thd, packet, &sfinfo->sig_name);
+			if(sfinfo->sig_field_type==sign_only_field) {				
+	    		packet->append(STRING_WITH_LEN(" SIGNATURE("));
+	    		CLOG_TPRINTLN("sig column name =%s",sfinfo->sig_column_name.str);
+	    		append_identifier(thd, packet, &sfinfo->sig_column_name);
+	    		packet->append(STRING_WITH_LEN(") INPUTS("));
+
+	    		input_field = sfinfo->input_fields;
+	    		for(uint j=0; j<sfinfo->input_fields_no; j++, input_field++) {
+	    			CLOG_TPRINTLN("input field =%s",input_field->str);
+	    			append_identifier(thd, packet, input_field);
+	    			if((j+1)<sfinfo->input_fields_no) packet->append(STRING_WITH_LEN(","));
+	    		}
+	    		packet->append(STRING_WITH_LEN(") VERIFY KEY VALUE("));
+    			append_identifier(thd, packet, &sfinfo->fixed_verification_key);
+    			packet->append(STRING_WITH_LEN(")"));
+			} else if(sfinfo->sig_field_type==sign_ordered_field) {				
+				packet->append(STRING_WITH_LEN(" TRUSTED ORDER("));
+				CLOG_TPRINTLN("order column name =%s",sfinfo->order_column_name.str);
+				append_identifier(thd, packet, &sfinfo->order_column_name);
+				packet->append(STRING_WITH_LEN(") SIGNATURE("));
+	    		CLOG_TPRINTLN("sig column name =%s",sfinfo->sig_column_name.str);
+				append_identifier(thd, packet, &sfinfo->sig_column_name);				
+				packet->append(STRING_WITH_LEN(")"));				
+			}else {
+				assert(sfinfo->sig_field_type!=0);
+			}			
+    	}
+    }
+#endif
+
   packet->append(STRING_WITH_LEN("\n)"));
+  CLOG_TPRINTLN("add Table level check constraints = %s",packet->c_ptr());
   if (show_table_options)
     add_table_options(thd, table, create_info_arg,
                       table_list->schema_table != 0, 0, packet);
@@ -3817,6 +3902,7 @@ extern ST_SCHEMA_TABLE schema_tables[];
 bool schema_table_store_record(THD *thd, TABLE *table)
 {
   int error;
+  CLOG_FUNCTIOND("bool schema_table_store_record(THD *thd, TABLE *table)");
 
   if (unlikely(thd->killed))
   {
@@ -4119,7 +4205,9 @@ bool get_lookup_field_values(THD *thd, COND *cond, TABLE_LIST *tables,
   LEX *lex= thd->lex;
   String *wild= lex->wild;
   bool rc= 0;
-
+  CLOG_FUNCTIOND("bool get_lookup_field_values(THD *thd, COND *cond, TABLE_LIST *tables,...)");
+  CLOG_TPRINTLN("Calculate lookup values(database name, table name)");
+  
   bzero((char*) lookup_field_values, sizeof(LOOKUP_FIELD_VALUES));
   switch (lex->sql_command) {
   case SQLCOM_SHOW_PLUGINS:
@@ -4205,6 +4293,8 @@ enum enum_schema_tables get_schema_table_idx(ST_SCHEMA_TABLE *schema_table)
 static int make_db_list(THD *thd, Dynamic_array<LEX_CSTRING*> *files,
                         LOOKUP_FIELD_VALUES *lookup_field_vals)
 {
+  CLOG_FUNCTIOND("static int make_db_list(THD *thd, Dynamic_array<LEX_CSTRING*> *files,..)");
+
   if (lookup_field_vals->wild_db_value)
   {
     /*
@@ -4369,6 +4459,8 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_CSTRING*> *table_names,
                      LEX_CSTRING *db_name)
 {
   char path[FN_REFLEN + 1];
+  CLOG_FUNCTIOND("static int make_table_name_list(...");
+  
   build_table_filename(path, sizeof(path) - 1, db_name->str, "", "", 0);
   if (!lookup_field_vals->wild_table_value &&
       lookup_field_vals->table_value.str)
@@ -4488,6 +4580,10 @@ fill_schema_table_by_open(THD *thd, MEM_ROOT *mem_root,
   TABLE_LIST *table_list;
   bool result= true;
   DBUG_ENTER("fill_schema_table_by_open");
+  CLOG_TPRINTLN("----------------------------------------------");
+  CLOG_FUNCTIOND("static bool fill_schema_table_by_open(THD....");
+  CLOG_TPRINTLN("----------------------------------------------");
+  
 
   /*
     When a view is opened its structures are allocated on a permanent
@@ -4502,6 +4598,7 @@ fill_schema_table_by_open(THD *thd, MEM_ROOT *mem_root,
     Use temporary arena instead of statement permanent arena. Also make
     it active arena and save original one for successive restoring.
   */
+  CLOG_STEP("1","To prevent uncecessary hogging of memory.. we use temporary arena and LEX for table/view opening..");
   old_arena= thd->stmt_arena;
   thd->stmt_arena= &i_s_arena;
   thd->set_n_backup_active_arena(&i_s_arena, &backup_arena);
@@ -4526,17 +4623,20 @@ fill_schema_table_by_open(THD *thd, MEM_ROOT *mem_root,
     orig_table_name here.  These copies are used for make_table_list()
     while unaltered values are passed to process_table() functions.
   */
+  CLOG_STEP("2","copy orig_db_name and talbe_name..");
   if (!thd->make_lex_string(&db_name,
                             orig_db_name->str, orig_db_name->length) ||
       !thd->make_lex_string(&table_name,
                             orig_table_name->str, orig_table_name->length))
     goto end;
+  CLOG_TPRINTLN("Copied db_name=%s, table_name=%s",db_name.str,table_name.str);
 
   /*
     Create table list element for table to be open. Link it with the
     temporary LEX. The latter is required to correctly open views and
     produce table describing their structure.
   */
+  CLOG_STEP("3","Create table list element for table to be open and link it the temporary LEX.");
   if (make_table_list(thd, &lex->select_lex, &db_name, &table_name))
     goto end;
 
@@ -4683,7 +4783,13 @@ static int fill_schema_table_names(THD *thd, TABLE_LIST *tables,
       thd->clear_error();
       return 0;
     }
+#ifdef TRUSTSQL_BUILD
+    if (trusted_table_exists(thd, db_name, table_name)) {
+    	table->field[4]->store(STRING_WITH_LEN("Yes"), cs);
+    }
+#endif
   }
+
   if (unlikely(schema_table_store_record(thd, table)))
     return 1;
   return 0;
@@ -4831,6 +4937,10 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
   TABLE_LIST table_list;
   uint res= 0;
   char db_name_buff[NAME_LEN + 1], table_name_buff[NAME_LEN + 1];
+  CLOG_TPRINTLN("-------------------------------------------------------------------");
+  CLOG_FUNCTIOND("static int fill_schema_table_from_frm(THD *thd, TABLE *table,...");
+  CLOG_TPRINTLN("-------------------------------------------------------------------");
+
 
   bzero((char*) &table_list, sizeof(TABLE_LIST));
   bzero((char*) &tbl, sizeof(TABLE));
@@ -4838,6 +4948,7 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
   DBUG_ASSERT(db_name->length <= NAME_LEN);
   DBUG_ASSERT(table_name->length <= NAME_LEN);
 
+  CLOG_STEP("1","case ~ db name & table name "); 
   if (lower_case_table_names)
   {
     /*
@@ -4857,12 +4968,14 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
     table_list.table_name= *table_name;
     table_list.db= *db_name;
   }
+  CLOG_TPRINTLN("DB NAME = %s   TABLE_NAME = %s",table_list.table_name.str, table_list.db.str); 
 
   /*
     TODO: investigate if in this particular situation we can get by
           simply obtaining internal lock of the data-dictionary
           instead of obtaining full-blown metadata lock.
   */
+  CLOG_STEP("2","lock ~"); 
   if (try_acquire_high_prio_shared_mdl_lock(thd, &table_list, can_deadlock))
   {
     /*
@@ -4897,6 +5010,7 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
                                            table_name, &tbl, 1))
     {
       table_list.table= &tbl;
+      CLOG_STEP("3","process table"); 
       res= schema_table->process_table(thd, &table_list, table,
                                        res, db_name, table_name);
       delete tbl.triggers;
@@ -4905,6 +5019,7 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
     goto end;
   }
 
+  CLOG_STEP("4","Get TABLE_SHARE for table."); 
   share= tdc_acquire_share(thd, &table_list, GTS_TABLE | GTS_VIEW);
   if (!share)
   {
@@ -4951,6 +5066,7 @@ static int fill_schema_table_from_frm(THD *thd, TABLE *table,
     goto end_share;
   }
 
+  CLOG_STEP("5","Get TABLE_SHARE for table."); 
   if (!open_table_from_share(thd, share, table_name, 0,
                              (EXTRA_RECORD | OPEN_FRM_FILE_ONLY),
                              thd->open_options, &tbl, FALSE))
@@ -5057,6 +5173,9 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   bool can_deadlock;
   MEM_ROOT tmp_mem_root;
   DBUG_ENTER("get_all_tables");
+  CLOG_TPRINTLN("@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@");
+  CLOG_FUNCTIOND("int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)");
+  CLOG_TPRINTLN("@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@-@@");
 
   bzero(&tmp_mem_root, sizeof(tmp_mem_root));
 
@@ -5080,11 +5199,14 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   thd->reset_n_backup_open_tables_state(&open_tables_state_backup);
 
   schema_table_idx= get_schema_table_idx(schema_table);
+  CLOG_TPRINTLN("SCHEMA_TABLE_ID = %d",schema_table_idx);
+  
   /* 
     this branch processes SHOW FIELDS, SHOW INDEXES commands.
     see sql_parse.cc, prepare_schema_table() function where
     this values are initialized
   */
+  CLOG_STEP("1","fill schema table by open?");
   if (lsel && lsel->table_list.first)
   {
     error= fill_schema_table_by_open(thd, thd->mem_root, TRUE,
@@ -5110,6 +5232,8 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   }
 
   bzero((char*) &table_acl_check, sizeof(table_acl_check));
+  
+  CLOG_STEP("2","make db list");
 
   if (make_db_list(thd, &db_names, &plan->lookup_field_vals))
     goto err;
@@ -5118,10 +5242,13 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
   init_alloc_root(&tmp_mem_root, "get_all_tables", SHOW_ALLOC_BLOCK_SIZE,
                   SHOW_ALLOC_BLOCK_SIZE, MY_THREAD_SPECIFIC);
 
+  CLOG_STEP("2","proces each db..");
   for (size_t i=0; i < db_names.elements(); i++)
   {
     LEX_CSTRING *db_name= db_names.at(i);
+	CLOG_TPRINTLN("for( i=%d, db_name=%s...)",i,db_name->str);
     DBUG_ASSERT(db_name->length <= NAME_LEN);
+	CLOG_STEP("2-1","Check Access!");
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     if (!(check_access(thd, SELECT_ACL, db_name->str,
                        &thd->col_access, NULL, 0, 1) ||
@@ -5131,6 +5258,7 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
 #endif
     {
       Dynamic_array<LEX_CSTRING*> table_names;
+      CLOG_STEP("2-2","make table name list");
       int res= make_table_name_list(thd, &table_names, lex,
                                     &plan->lookup_field_vals, db_name);
       if (unlikely(res == 2))   /* Not fatal error, continue */
@@ -5138,10 +5266,12 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
       if (unlikely(res))
         goto err;
 
+	  CLOG_STEP("2-3","restore record!");
       for (size_t i=0; i < table_names.elements(); i++)
       {
         LEX_CSTRING *table_name= table_names.at(i);
         DBUG_ASSERT(table_name->length <= NAME_LEN);
+		CLOG_TPRINTLN("for( i=%d, table_name=%s...)",i,table_name->str);
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
         if (!(thd->col_access & TABLE_ACLS))
@@ -5153,11 +5283,16 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
             continue;
         }
 #endif
-	restore_record(table, s->default_values);
+
+	    restore_record(table, s->default_values);
         table->field[schema_table->idx_field1]->
           store(db_name->str, db_name->length, system_charset_info);
         table->field[schema_table->idx_field2]->
           store(table_name->str, table_name->length, system_charset_info);
+
+		
+	    CLOG_TPRINTLN("FIELD NAME = %s, FIELD INDEX= %d, VALUE= %s",table->field[schema_table->idx_field1]->field_name.str,schema_table->idx_field1,db_name->str);
+		CLOG_TPRINTLN("FIELD NAME = %s, FIELD INDEX= %d, VALUE= %s",table->field[schema_table->idx_field2]->field_name.str,schema_table->idx_field2,table_name->str);
 
         if (!partial_cond || partial_cond->val_int())
         {
@@ -5180,6 +5315,7 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
           /* SHOW TABLE NAMES command */
           if (schema_table_idx == SCH_TABLE_NAMES)
           {
+            CLOG_TPRINTLN("It's SHOW TABLE_NAME command");
             if (fill_schema_table_names(thd, tables, db_name, table_name))
               continue;
           }
@@ -5193,13 +5329,14 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
             if (!(table_open_method & ~OPEN_FRM_ONLY) &&
                 db_name != &INFORMATION_SCHEMA_NAME)
             {
+      		  CLOG_STEP("2-3-1","!!!!!!!!!!!! fill_schem_table_from_frm(...)");
               if (!fill_schema_table_from_frm(thd, table, schema_table,
                                               db_name, table_name,
                                               &open_tables_state_backup,
                                               can_deadlock))
                 continue;
             }
-
+			CLOG_STEP("2-3-1","!!!!!!!!!!!! fill_schema_table_by_open(...)");
             DEBUG_SYNC(thd, "before_open_in_get_all_tables");
             if (fill_schema_table_by_open(thd, &tmp_mem_root, FALSE,
                                           table, schema_table,
@@ -5241,6 +5378,10 @@ int fill_schema_schemata(THD *thd, TABLE_LIST *tables, COND *cond)
     TODO: fill_schema_shemata() is called when new client is connected.
     Returning error status in this case leads to client hangup.
   */
+  CLOG_TPRINTLN("--------------------------------------------------------------------");
+  CLOG_FUNCTIOND("int fill_schema_schemata(THD *thd, TABLE_LIST *tables, COND *cond)");
+  CLOG_TPRINTLN("fill_schema_schemata is called when new client is connected.");
+  CLOG_TPRINTLN("--------------------------------------------------------------------");
 
   LOOKUP_FIELD_VALUES lookup_field_vals;
   Dynamic_array<LEX_CSTRING*> db_names;
@@ -5316,6 +5457,7 @@ static int get_schema_tables_record(THD *thd, TABLE_LIST *tables,
   int info_error= 0;
   CHARSET_INFO *cs= system_charset_info;
   DBUG_ENTER("get_schema_tables_record");
+  CLOG_FUNCTIOND("static int get_schema_tables_record(THD *thd, TABLE_LIST *tables,...");
 
   restore_record(table, s->default_values);
   table->field[0]->store(STRING_WITH_LEN("def"), cs);
@@ -5596,8 +5738,47 @@ static int get_schema_tables_record(THD *thd, TABLE_LIST *tables,
     if (show_table->s->tmp_table != NO_TMP_TABLE)
       tmp.str= "Y";
     table->field[22]->store(tmp.str, tmp.length, cs);
-  }
 
+    /*
+#ifdef TRUSTSQL_BUILD
+    if (trusted_table_exists(thd, db_name, table_name)) {
+    	table->field[23]->store(STRING_WITH_LEN("Y"), cs);
+    } else {
+    	table->field[23]->store(STRING_WITH_LEN("N"), cs);
+    }
+#endif
+*/
+#ifdef TRUSTSQL_BUILD
+    if(show_table->s->trusted_table_type!=0) {
+    	if(show_table->s->trusted_table_type==1) {
+    		table->field[23]->store(STRING_WITH_LEN("1"), cs);
+    	} else if(show_table->s->trusted_table_type==2) {
+    		table->field[23]->store(STRING_WITH_LEN("2"), cs);
+    	}
+
+    	unsigned char  sig_field_infos_no;
+    	Sig_field_info *sig_field_info;
+    	Sig_field_info sf_info;
+
+    	sig_field_infos_no = show_table->s->trust_options->sig_field_infos_no;
+    	sig_field_info = show_table->s->trust_options->sig_field_info_list;
+    	for(int i=0; i<sig_field_infos_no; i++,sig_field_info++) {
+    		if(sig_field_info->order_column_name.length!=0) {
+    			CLOG_TPRINTLN("SIG order_column_name  = %s",sig_field_info->order_column_name.str);
+    			table->field[24]->store(sig_field_info->order_column_name.str, sig_field_info->order_column_name.length, cs);
+
+    			if(sig_field_info->time_column_name.length!=0) {
+    				CLOG_TPRINTLN("SIG time_column_name  = %s",sig_field_info->time_column_name.str);
+    				table->field[25]->store(sig_field_info->time_column_name.str, sig_field_info->time_column_name.length, cs);
+    			}
+    		}
+
+    	}
+    } else {
+       	table->field[23]->store(STRING_WITH_LEN(""), cs);
+    }
+#endif
+  }
 err:
   if (unlikely(res || info_error))
   {
@@ -5844,7 +6025,15 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
   Field **ptr, *field;
   int count;
   bool quoted_defaults= lex->sql_command != SQLCOM_SHOW_FIELDS;
+#ifdef TRUSTSQL_BUILD
+  LEX_CSTRING sign_option;
+#endif
+
+  
   DBUG_ENTER("get_schema_column_record");
+  CLOG_TPRINTLN("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
+  CLOG_FUNCTIOND("static int get_schema_column_record(THD *thd, TABLE_LIST *tables,...");
+  CLOG_TPRINTLN("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
 
   if (res)
   {
@@ -5878,7 +6067,7 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
     String type(tmp,sizeof(tmp), system_charset_info);
 
     DEBUG_SYNC(thd, "get_schema_column");
-
+    CLOG_TPRINTLN("get_schema_column field = %s",field->field_name.str);
     if (wild && wild[0] &&
         wild_case_compare(system_charset_info, field->field_name.str, wild))
       continue;
@@ -5905,29 +6094,37 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
         end=strmov(end,grant_types.type_names[bitnr]);
       }
     }
-    table->field[18]->store(tmp+1,end == tmp ? 0 : (uint) (end-tmp-1), cs);
-
+	CLOG_TPRINTLN("Field PRIVILEGES");
+    table->field[18]->store(tmp+1,end == tmp ? 0 : (uint) (end-tmp-1), cs);    
 #endif
+	CLOG_TPRINTLN("Field TABLE_CATALOG");
     table->field[0]->store(STRING_WITH_LEN("def"), cs);
-    table->field[1]->store(db_name->str, db_name->length, cs);
+	CLOG_TPRINTLN("Field TABLE_SCHEMA");
+    table->field[1]->store(db_name->str, db_name->length, cs);	
+	CLOG_TPRINTLN("Field TABLE_NAME");
     table->field[2]->store(table_name->str, table_name->length, cs);
+	CLOG_TPRINTLN("Field COLUMN_NAME");
     table->field[3]->store(field->field_name.str, field->field_name.length,
                            cs);
+	CLOG_TPRINTLN("Field ORDINAL_POSITION");
     table->field[4]->store((longlong) count, TRUE);
 
     if (get_field_default_value(thd, field, &type, quoted_defaults))
     {
+   	  CLOG_TPRINTLN("Field COLUMN_DEFAULT");
       table->field[5]->store(type.ptr(), type.length(), cs);
       table->field[5]->set_notnull();
     }
     pos=(uchar*) ((field->flags & NOT_NULL_FLAG) ?  "NO" : "YES");
+    CLOG_TPRINTLN("Field IS_NULLABLE");
     table->field[6]->store((const char*) pos,
                            strlen((const char*) pos), cs);
     store_column_type(table, field, cs, 7);
     pos=(uchar*) ((field->flags & PRI_KEY_FLAG) ? "PRI" :
                  (field->flags & UNIQUE_KEY_FLAG) ? "UNI" :
                  (field->flags & MULTIPLE_KEY_FLAG) ? "MUL":"");
-    table->field[16]->store((const char*) pos,
+    CLOG_TPRINTLN("Field COLUMN_KEY");
+	table->field[16]->store((const char*) pos,
                             strlen((const char*) pos), cs);
 
     StringBuffer<256> buf;
@@ -5940,8 +6137,10 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
       String gen_s(tmp,sizeof(tmp), system_charset_info);
       gen_s.length(0);
       field->vcol_info->print(&gen_s);
+	  CLOG_TPRINTLN("Field GENERATION_EXPRESSION");
       table->field[21]->store(gen_s.ptr(), gen_s.length(), cs);
       table->field[21]->set_notnull();
+  	  CLOG_TPRINTLN("Field IS_GENERATED");
       table->field[20]->store(STRING_WITH_LEN("ALWAYS"), cs);
 
       if (field->vcol_info->stored_in_db)
@@ -5973,8 +6172,29 @@ static int get_schema_column_record(THD *thd, TABLE_LIST *tables,
         buf.append(STRING_WITH_LEN(", "));
       buf.append(STRING_WITH_LEN("WITHOUT SYSTEM VERSIONING"), cs);
     }
+    CLOG_TPRINTLN("Field EXTRA");
     table->field[17]->store(buf.ptr(), buf.length(), cs);
+    CLOG_TPRINTLN("Field COLUMN_COMMENT");
     table->field[19]->store(field->comment.str, field->comment.length, cs);
+
+#ifdef TRUSTSQL_BUILD
+	if(show_table->s->trusted_table_type!=0) {
+		CLOG_TPRINTLN("Field IS_SIGNATURE");
+		sign_option = show_table->s->trust_options->get_field_option(thd, field->field_name);
+		if(sign_option.str) {
+			CLOG_TPRINTLN("str value = %s",sign_option.str);
+			table->field[22]->store(sign_option.str, sign_option.length,cs);
+		}
+	}
+	if(show_table->s->trusted_table_type==2) {
+		sign_option = show_table->s->trust_options->get_order_option(thd, field->field_name);
+		if(sign_option.str!=0) {
+			CLOG_TPRINTLN("str value = %s",sign_option.str);
+			table->field[22]->store(sign_option.str, sign_option.length,cs);
+		}
+	}
+#endif
+
     if (schema_table_store_record(thd, table))
       DBUG_RETURN(1);
   }
@@ -7109,6 +7329,19 @@ static int get_schema_key_column_usage_record(THD *thd,
   DBUG_RETURN(res);
 }
 
+#ifdef TRUSTSQL_BUILD
+static int get_schema_sig_column_usage_record(THD *thd,
+					      TABLE_LIST *tables,
+					      TABLE *table, bool res,
+					      const LEX_CSTRING *db_name,
+					      const LEX_CSTRING *table_name)
+{
+  DBUG_ENTER("get_schema_sig_column_usage_record");
+  CLOG_FUNCTIOND("static int get_schema_sig_column_usage_record(THD *thd,...)");
+ 
+  DBUG_RETURN(1);
+}
+#endif 
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
 static void collect_partition_expr(THD *thd, List<const char> &field_list,
@@ -7920,6 +8153,43 @@ get_referential_constraints_record(THD *thd, TABLE_LIST *tables,
   DBUG_RETURN(0);
 }
 
+
+#ifdef TRUSTSQL_BUILD
+
+/*
+  Fill and store records into I_S.sig_referential_constraints table
+
+  SYNOPSIS
+    get_sig_referential_constraints_record()
+    thd                 thread handle
+    tables              table list struct(processed table)
+    table               I_S table
+    res                 1 means the error during opening of the processed table
+                        0 means processed table is opened without error
+    base_name           db name
+    file_name           table name
+
+  RETURN
+    0	ok
+    #   error
+*/
+
+static int
+get_sig_referential_constraints_record(THD *thd, TABLE_LIST *tables,
+                                   TABLE *table, bool res,
+                                   const LEX_CSTRING *db_name,
+                                   const LEX_CSTRING *table_name)
+{
+  CHARSET_INFO *cs= system_charset_info;
+  LEX_CSTRING *s;
+  DBUG_ENTER("get_sig_referential_constraints_record");
+  CLOG_FUNCTIOND("static int get_sig_referential_constraints_record(THD *thd, TABLE_LIST *tables,...");
+  DBUG_RETURN(1);
+}
+#endif
+
+
+
 struct schema_table_ref
 {
   const char *table_name;
@@ -7979,11 +8249,15 @@ ST_SCHEMA_TABLE *find_schema_table(THD *thd, const LEX_CSTRING *table_name,
   schema_table_ref schema_table_a;
   ST_SCHEMA_TABLE *schema_table= schema_tables;
   DBUG_ENTER("find_schema_table");
+  CLOG_FUNCTIOND("ST_SCHEMA_TABLE *find_schema_table(THD *thd, const LEX_CSTRING *table_name,bool *in_plugin)");
+  CLOG_TPRINTLN("  Find schema_tables element by name");
+  CLOG_TPRINTLN("name = %s",table_name->str);
 
   *in_plugin= false;
   for (; schema_table->table_name; schema_table++)
   {
-    if (!my_strcasecmp(system_charset_info,
+    CLOG_TPRINTLN("for schem_table->table_name(%s)",schema_table->table_name);
+	if (!my_strcasecmp(system_charset_info,
                        schema_table->table_name,
                        table_name->str))
       DBUG_RETURN(schema_table);
@@ -7991,6 +8265,7 @@ ST_SCHEMA_TABLE *find_schema_table(THD *thd, const LEX_CSTRING *table_name,
 
   *in_plugin= true;
   schema_table_a.table_name= table_name->str;
+  CLOG_TPRINTLN("plugin_forach~");
   if (plugin_foreach(thd, find_schema_table_in_plugin,
                      MYSQL_INFORMATION_SCHEMA_PLUGIN, &schema_table_a))
     DBUG_RETURN(schema_table_a.schema_table);
@@ -8012,8 +8287,10 @@ mark_all_fields_used_in_query(THD *thd,
 {
   Item *item;
   DBUG_ENTER("mark_all_fields_used_in_query");
+  CLOG_FUNCTIOND("static void  mark_all_fields_used_in_query(...)");
 
   /* If not SELECT command, return all columns */
+  CLOG_STEP("1"," If not select command, return all columns");
   if (thd->lex->sql_command != SQLCOM_SELECT &&
       thd->lex->sql_command != SQLCOM_SET_OPTION)
   {
@@ -8021,6 +8298,7 @@ mark_all_fields_used_in_query(THD *thd,
     DBUG_VOID_RETURN;
   }
 
+  CLOG_STEP("2","for ( item=all_items, item>next ..)");
   for (item= all_items ; item ; item= item->next)
   {
     if (item->type() == Item::FIELD_ITEM)
@@ -8028,6 +8306,7 @@ mark_all_fields_used_in_query(THD *thd,
       ST_FIELD_INFO *fields= schema_fields;
       uint count;
       Item_field *item_field= (Item_field*) item;
+	  CLOG_TPRINTLN("item->type()==Item::FIELD_ITEM,  itme_field->field_name.str=%s",item_field->field_name.str);
 
       /* item_field can be '*' as this function is called before fix_fields */
       if (item_field->field_name.str == star_clex_str.str)
@@ -8035,8 +8314,11 @@ mark_all_fields_used_in_query(THD *thd,
         bitmap_set_all(bitmap);
         break;
       }
+
+	  CLOG_TPRINTLN("Compare All schema fields & item fields");
       for (count=0; fields->field_name; fields++, count++)
       {
+		CLOG_TPRINTLN(" count = %d, schmea field name=%s, item_field_name.str=%s",count, fields->field_name,item_field->field_name.str);
         if (!my_strcasecmp(system_charset_info, fields->field_name,
                            item_field->field_name.str))
         {
@@ -8084,11 +8366,23 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
   MY_BITMAP bitmap;
   my_bitmap_map *buf;
   DBUG_ENTER("create_schema_table");
+  CLOG_TPRINTLN("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+  CLOG_FUNCTIOND("TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)");
+  CLOG_TPRINTLN("Create information_schema table using schema_table data.");
+  CLOG_TPRINTLN("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
 
+  CLOG_TPRINTLN("DB = %s, Table_name = %s, Schema_table_name = %s",table_list->db.str,table_list->table_name.str, table_list->schema_table_name.str);
+
+  CLOG_STEP("1","get field_count");
   for (field_count= 0, fields= fields_info; fields->field_name; fields++)
     field_count++;
+  CLOG_TPRINTLN("field_count(0x%08X)",field_count);
+
+  CLOG_STEP("2","malloc bitmap_buffer ( buf )");
   if (!(buf= (my_bitmap_map*) thd->alloc(bitmap_buffer_size(field_count))))
     DBUG_RETURN(NULL);
+
+  CLOG_STEP("3","my_bitmap_init()");
   my_bitmap_init(&bitmap, buf, field_count, 0);
 
   if (!thd->stmt_arena->is_conventional() &&
@@ -8097,11 +8391,17 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
   else
     all_items= thd->free_list;
 
+  CLOG_STEP("4","mark all fields used in query");
   mark_all_fields_used_in_query(thd, fields_info, &bitmap, all_items);
 
+  CLOG_STEP("5","new Item_[type] and add it to field_list");
   for (field_count=0; fields_info->field_name; fields_info++)
   {
-    size_t field_name_length= strlen(fields_info->field_name);
+    CLOG_STEP("4-1","for(field_info..)-------------------------------");
+	CLOG_TPRINTLN("field_copunt=%d",field_count);
+	CLOG_TPRINTLN("Field Name = %s, Field Type=%d, Field Length=%d",fields_info->field_name,fields_info->field_type,fields_info->field_length);
+
+	size_t field_name_length= strlen(fields_info->field_name);
     switch (fields_info->field_type) {
     case MYSQL_TYPE_TINY:
     case MYSQL_TYPE_LONG:
@@ -8214,10 +8514,13 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
       break;
     }
     }
-    field_list.push_back(item, thd->mem_root);
+	CLOG_STEP("6","Push new item to field_list");
+	field_list.push_back(item, thd->mem_root);
     item->maybe_null= (fields_info->field_flags & MY_I_S_MAYBE_NULL);
     field_count++;
   }
+
+  CLOG_STEP("6","make TMP_TABLE_PARAM");
   TMP_TABLE_PARAM *tmp_table_param =
     (TMP_TABLE_PARAM*) (thd->alloc(sizeof(TMP_TABLE_PARAM)));
   tmp_table_param->init();
@@ -8226,6 +8529,7 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
   tmp_table_param->schema_table= 1;
   SELECT_LEX *select_lex= thd->lex->current_select;
   bool keep_row_order= is_show_command(thd);
+  CLOG_STEP("7","crete_tmp_table!");
   if (!(table= create_tmp_table(thd, tmp_table_param,
                                 field_list, (ORDER*) 0, 0, 0, 
                                 (select_lex->options | thd->variables.option_bits |
@@ -8290,6 +8594,8 @@ int make_schemata_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
   LEX *lex= thd->lex;
   SELECT_LEX *sel= lex->current_select;
   Name_resolution_context *context= &sel->context;
+  CLOG_FUNCTIOND("int make_schemata_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)");
+  CLOG_TPRINTLN(" schema_table name = %s",schema_table->table_name);
 
   if (!sel->item_list.elements)
   {
@@ -8326,20 +8632,31 @@ int make_table_names_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
   LEX_CSTRING field_name= {field_info->field_name,
                            strlen(field_info->field_name) };
 
+  CLOG_FUNCTIOND("int make_table_names_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)");
+  CLOG_TPRINTLN("field_name = %s",field_name.str);
+  
+  CLOG_STEP("1","make table names buffer");
   buffer.length(0);
   buffer.append(field_info->old_name);
   buffer.append(&lex->select_lex.db);
+  CLOG_TPRINTLN("buffer.append(%s)",field_info->old_name);
+  CLOG_TPRINTLN("buffer.append(%s)",&lex->select_lex.db.str);
+  
   if (lex->wild && lex->wild->ptr())
   {
     buffer.append(STRING_WITH_LEN(" ("));
     buffer.append(lex->wild->ptr());
     buffer.append(')');
   }
+  CLOG_STEP("2","New Item_field with field_name");
   Item_field *field= new (thd->mem_root) Item_field(thd, context,
                                     NullS, NullS, &field_name);
+
+  CLOG_STEP("3","Add the item  select list.");
   if (add_item_to_list(thd, field))
     return 1;
   field->set_name(thd, buffer.ptr(), buffer.length(), system_charset_info);
+
   if (thd->lex->verbose)
   {
     field_info= &schema_table->fields_info[3];
@@ -8352,20 +8669,44 @@ int make_table_names_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
     field->set_name(thd, field_info->old_name, strlen(field_info->old_name),
                     system_charset_info);
   }
+
+#ifdef TRUSTSQL_BUILD
+  CLOG_STEP("4","Trusted Build add IS_TRUSTED(Trusted) item ");
+  field_info= &schema_table->fields_info[4];
+  field_name= {field_info->field_name,
+                        strlen(field_info->field_name) };
+  field= new (thd->mem_root) Item_field(thd, context,
+                             NullS, NullS, &field_name);
+
+  if (field) {
+      field->set_name(thd, field_info->old_name,
+                        strlen(field_info->old_name),
+                        system_charset_info);
+      if (add_item_to_list(thd, field))
+          return 1;
+  }
+#endif
+
   return 0;
 }
 
 
 int make_columns_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
 {
+#ifdef TRUSTSQL_BUILD
+  int fields_arr[]= {3, 15, 14, 6, 16, 5, 17, 18, 19, 22, -1};
+#else
   int fields_arr[]= {3, 15, 14, 6, 16, 5, 17, 18, 19, -1};
+#endif
   int *field_num= fields_arr;
   ST_FIELD_INFO *field_info;
   Name_resolution_context *context= &thd->lex->select_lex.context;
+  CLOG_FUNCTIOND("int make_columns_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)");
 
   for (; *field_num >= 0; field_num++)
   {
     field_info= &schema_table->fields_info[*field_num];
+	CLOG_TPRINTLN(" field_num = %d, field_name=%s",*field_num,field_info->field_name);
     LEX_CSTRING field_name= {field_info->field_name,
                              strlen(field_info->field_name)};
     if (!thd->lex->verbose && (*field_num == 14 ||
@@ -8376,6 +8717,7 @@ int make_columns_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
                                       NullS, NullS, &field_name);
     if (field)
     {
+      CLOG_TPRINTLN(" make old format = %s",field_info->old_name);
       field->set_name(thd, field_info->old_name,
                       strlen(field_info->old_name),
                       system_charset_info);
@@ -8385,7 +8727,6 @@ int make_columns_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
   }
   return 0;
 }
-
 
 int make_character_sets_old_format(THD *thd, ST_SCHEMA_TABLE *schema_table)
 {
@@ -8459,6 +8800,12 @@ int mysql_schema_table(THD *thd, LEX *lex, TABLE_LIST *table_list)
 {
   TABLE *table;
   DBUG_ENTER("mysql_schema_table");
+  CLOG_TPRINTLN("************************************************************************");
+  CLOG_FUNCTIOND("int mysql_schema_table(THD *thd, LEX *lex, TABLE_LIST *table_list)");
+  CLOG_TPRINTLN("Create information_schema table"); 
+  CLOG_TPRINTLN("************************************************************************");
+
+  CLOG_STEP("1","create_schema_table!!");
   if (!(table= create_schema_table(thd, table_list)))
     DBUG_RETURN(1);
   table->s->tmp_table= SYSTEM_TMP_TABLE;
@@ -8475,6 +8822,7 @@ int mysql_schema_table(THD *thd, LEX *lex, TABLE_LIST *table_list)
                                           table_list->schema_table_name.str,
                                           table_list->alias.str);
   table_list->table_name= table->s->table_name;
+  CLOG_TPRINTLN("table_list->table_name=%s",table_list->table_name.str);
   table_list->table= table;
   table->next= thd->derived_tables;
   thd->derived_tables= table;
@@ -8509,6 +8857,7 @@ int mysql_schema_table(THD *thd, LEX *lex, TABLE_LIST *table_list)
     {
       transl->item= item;
       transl->name= item->name;
+	  CLOG_TPRINTLN("transl->name = %s",transl->name.str);
       if (item->fix_fields_if_needed(thd, &transl->item))
         DBUG_RETURN(1);
     }
@@ -8540,10 +8889,15 @@ int make_schema_select(THD *thd, SELECT_LEX *sel,
   LEX_CSTRING db, table;
   DBUG_ENTER("make_schema_select");
   DBUG_PRINT("enter", ("mysql_schema_select: %s", schema_table->table_name));
+  CLOG_FUNCTIOND("int make_schema_select(THD *thd, SELECT_LEX *sel, ST_SCHEMA_TABLE *schema_table)");
+  CLOG_TPRINTLN("Generate select from information_schema table");
+  CLOG_TPRINTLN("mysql_schema_select: %s", schema_table->table_name);
+  
   /*
      We have to make non const db_name & table_name
      because of lower_case_table_names
   */
+  CLOG_STEP("1","We have to make non const db_name & talbe_name because of lower case table names..");
   if (!thd->make_lex_string(&db, INFORMATION_SCHEMA_NAME.str,
                             INFORMATION_SCHEMA_NAME.length))
     DBUG_RETURN(1);
@@ -8552,9 +8906,13 @@ int make_schema_select(THD *thd, SELECT_LEX *sel,
                             strlen(schema_table->table_name)))
     DBUG_RETURN(1);
 
+  CLOG_STEP("2","Call schemata old_format(...)");
   if (schema_table->old_format(thd, schema_table))
     DBUG_RETURN(1);
 
+  
+  CLOG_STEP("2","Att table to list");
+  CLOG_TPRINTLN("db = %s, table=%s",db.str,table.str);
   if (!sel->add_table_to_list(thd, new Table_ident(thd, &db, &table, 0),
                               0, 0, TL_READ, MDL_SHARED_READ))
     DBUG_RETURN(1);
@@ -8722,7 +9080,8 @@ bool get_schema_tables_result(JOIN *join,
   bool result= 0;
   PSI_stage_info org_stage;
   DBUG_ENTER("get_schema_tables_result");
-
+  CLOG_FUNCTIOND("bool get_schema_tables_result(...)");
+  
   Warnings_only_error_handler err_handler;
   thd->push_internal_handler(&err_handler);
   thd->backup_stage(&org_stage);
@@ -8799,6 +9158,7 @@ bool get_schema_tables_result(JOIN *join,
         cond= tab->cache_select->cond;
       }
 
+	  CLOG_TPRINTLN("!!! call fill_table !!!");
       if (table_list->schema_table->fill_table(thd, table_list, cond))
       {
         result= 1;
@@ -8975,7 +9335,7 @@ ST_FIELD_INFO tables_fields_info[]=
   {"TABLE_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE},
   {"TABLE_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, "Name",
    SKIP_OPEN_TABLE},
-  {"TABLE_TYPE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FRM_ONLY},
+  {"TABLE_TYPE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FRM_ONLY},  
   {"ENGINE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 1, "Engine", OPEN_FRM_ONLY},
   {"VERSION", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0,
    (MY_I_S_MAYBE_NULL | MY_I_S_UNSIGNED), "Version", OPEN_FRM_ONLY},
@@ -9007,7 +9367,12 @@ ST_FIELD_INFO tables_fields_info[]=
    "Comment", OPEN_FRM_ONLY},
   {"MAX_INDEX_LENGTH", MY_INT64_NUM_DECIMAL_DIGITS, MYSQL_TYPE_LONGLONG, 0,
    (MY_I_S_MAYBE_NULL | MY_I_S_UNSIGNED), "Max_index_length", OPEN_FULL_TABLE},
-  {"TEMPORARY", 1, MYSQL_TYPE_STRING, 0, MY_I_S_MAYBE_NULL, "Temporary", OPEN_FRM_ONLY},
+  {"TEMPORARY", 1, MYSQL_TYPE_STRING, 0, MY_I_S_MAYBE_NULL, "Temporary", OPEN_FRM_ONLY},  
+#ifdef TRUSTSQL_BUILD
+  {"TRUSTED_TYPE",1, MYSQL_TYPE_STRING, 0, 0, "Trusted", OPEN_FRM_ONLY},
+  {"ORDER_COLUMN",NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, "Order Field", OPEN_FRM_ONLY},
+  {"TIME_COLUMN",NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, "Time Field", OPEN_FRM_ONLY},
+#endif
   {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
 };
 
@@ -9048,6 +9413,9 @@ ST_FIELD_INFO columns_fields_info[]=
   {"IS_GENERATED", 6, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FRM_ONLY},
   {"GENERATION_EXPRESSION", MAX_FIELD_VARCHARLENGTH, MYSQL_TYPE_STRING, 0, 1,
     0, OPEN_FRM_ONLY},
+#ifdef TRUSTSQL_BUILD
+  {"IS_SIGNATURE", 1024 /* Let's define later */, MYSQL_TYPE_STRING, 0, 0, "Signature", OPEN_FRM_ONLY},
+#endif
   {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
 };
 
@@ -9342,6 +9710,9 @@ ST_FIELD_INFO table_names_fields_info[]=
    MYSQL_TYPE_STRING, 0, 0, "Tables_in_", SKIP_OPEN_TABLE},
   {"TABLE_TYPE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, "Table_type",
    OPEN_FRM_ONLY},
+#ifdef TRUSTSQL_BUILD
+  {"IS_TRUSTED",3, MYSQL_TYPE_STRING, 0, 0, "Trusted", OPEN_FRM_ONLY},
+#endif   
   {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
 };
 
@@ -9574,6 +9945,57 @@ ST_FIELD_INFO files_fields_info[]=
   {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
 };
 
+#ifdef TRUSTSQL_BUILD
+
+ST_FIELD_INFO sig_column_usage_fields_info[]=
+{
+  {"CONSTRAINT_CATALOG", FN_REFLEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"CONSTRAINT_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"CONSTRAINT_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"TABLE_CATALOG", FN_REFLEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"TABLE_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"TABLE_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"COLUMN_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"ORDINAL_POSITION", 10 ,MYSQL_TYPE_LONGLONG, 0, 0, 0, OPEN_FULL_TABLE},
+  {"POSITION_IN_UNIQUE_CONSTRAINT", 10 ,MYSQL_TYPE_LONGLONG, 0, 1, 0,
+   OPEN_FULL_TABLE},
+  {"REFERENCED_TABLE_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 1, 0,
+   OPEN_FULL_TABLE},
+  {"REFERENCED_TABLE_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 1, 0,
+   OPEN_FULL_TABLE},
+  {"REFERENCED_COLUMN_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 1, 0,
+   OPEN_FULL_TABLE},
+  {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
+};
+
+ST_FIELD_INFO sig_referential_constraints_fields_info[]=
+{
+  {"CONSTRAINT_CATALOG", FN_REFLEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"CONSTRAINT_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"CONSTRAINT_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"UNIQUE_CONSTRAINT_CATALOG", FN_REFLEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"UNIQUE_CONSTRAINT_SCHEMA", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {"UNIQUE_CONSTRAINT_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0,
+   MY_I_S_MAYBE_NULL, 0, OPEN_FULL_TABLE},
+  {"MATCH_OPTION", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"UPDATE_RULE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"DELETE_RULE", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"TABLE_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0, OPEN_FULL_TABLE},
+  {"REFERENCED_TABLE_NAME", NAME_CHAR_LEN, MYSQL_TYPE_STRING, 0, 0, 0,
+   OPEN_FULL_TABLE},
+  {0, 0, MYSQL_TYPE_STRING, 0, 0, 0, SKIP_OPEN_TABLE}
+};
+
+
+#endif
+
+
 void init_fill_schema_files_row(TABLE* table)
 {
   int i;
@@ -9775,7 +10197,7 @@ ST_SCHEMA_TABLE schema_tables[]=
    fill_schema_collation, make_old_format, 0, -1, -1, 0, 0},
   {"COLLATION_CHARACTER_SET_APPLICABILITY", coll_charset_app_fields_info,
    0, fill_schema_coll_charset_app, 0, 0, -1, -1, 0, 0},
-  {"COLUMNS", columns_fields_info, 0,
+   {"COLUMNS", columns_fields_info, 0,
    get_all_tables, make_columns_old_format, get_schema_column_record, 1, 2, 0,
    OPTIMIZE_I_S_TABLE|OPEN_VIEW_FULL},
   {"COLUMN_PRIVILEGES", column_privileges_fields_info, 0,
@@ -9863,6 +10285,19 @@ ST_SCHEMA_TABLE schema_tables[]=
   {"SPATIAL_REF_SYS", spatial_ref_sys_fields_info, 0,
    fill_spatial_ref_sys, make_old_format, 0, -1, -1, 0, 0},
 #endif /*HAVE_SPATIAL*/
+
+#ifdef TRUSTSQL_BUILD
+
+{"SIG_COLUMN_USAGE", sig_column_usage_fields_info, 0,
+ get_all_tables, 0, get_schema_sig_column_usage_record, 4, 5, 0, OPTIMIZE_I_S_TABLE|OPEN_TABLE_ONLY},
+
+{"SIG_REFERENTIAL_CONSTRAINTS", sig_referential_constraints_fields_info,
+ 0, get_all_tables, 0, get_sig_referential_constraints_record,
+ 1, 9, 0, OPTIMIZE_I_S_TABLE|OPEN_TABLE_ONLY},
+
+#endif
+
+
   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 };
 

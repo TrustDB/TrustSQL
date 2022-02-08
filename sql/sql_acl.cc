@@ -56,6 +56,7 @@
 #include "password.h"
 
 #include "sql_plugin_compat.h"
+#include "clog.h"
 
 bool mysql_user_table_is_in_short_password_format= false;
 
@@ -1617,7 +1618,8 @@ bool acl_init(bool dont_read_acl_tables)
   THD  *thd;
   bool return_val;
   DBUG_ENTER("acl_init");
-
+  CLOG_FUNCTIOND("bool acl_init(bool dont_read_acl_tables)");
+  
   acl_cache= new Hash_filo<acl_entry>(ACL_CACHE_SIZE, 0, 0,
                            (my_hash_get_key) acl_entry_get_key,
                            (my_hash_free_key) free,
@@ -2219,7 +2221,8 @@ bool acl_reload(THD *thd)
   MEM_ROOT old_mem;
   int result;
   DBUG_ENTER("acl_reload");
-
+  CLOG_FUNCTIOND("bool acl_reload(THD *thd)");
+  
   Grant_tables tables(Table_host | Table_user | Table_db | Table_proxies_priv |
                       Table_roles_mapping, TL_READ);
   /*
@@ -7180,6 +7183,7 @@ bool grant_init()
   THD  *thd;
   bool return_val;
   DBUG_ENTER("grant_init");
+  CLOG_FUNCTIOND("bool grant_init()");
 
   if (!(thd= new THD(0)))
     DBUG_RETURN(1);				/* purecov: deadcode */
@@ -7384,6 +7388,7 @@ bool grant_reload(THD *thd)
   MEM_ROOT old_mem;
   int result;
   DBUG_ENTER("grant_reload");
+  CLOG_FUNCTIOND("bool grant_reload(THD *thd)");
 
   /*
     To avoid deadlocks we should obtain table locks before
@@ -7501,6 +7506,8 @@ bool check_grant(THD *thd, ulong want_access, TABLE_LIST *tables,
   GRANT_TABLE *grant_table_role= NULL;
   DBUG_ENTER("check_grant");
   DBUG_ASSERT(number > 0);
+  CLOG_FUNCTIOND("bool check_grant(...)");
+  CLOG_TPRINTLN("Check table level grants");
 
   /*
     Walk through the list of tables that belong to the query and save the

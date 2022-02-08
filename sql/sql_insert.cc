@@ -81,6 +81,7 @@
 #include <my_bit.h>
 
 #include "debug_sync.h"
+#include "clog.h"
 
 #ifndef EMBEDDED_LIBRARY
 static bool delayed_get_table(THD *thd, MDL_request *grl_protection_request,
@@ -207,6 +208,7 @@ static int check_insert_fields(THD *thd, TABLE_LIST *table_list,
 {
   TABLE *table= table_list->table;
   DBUG_ENTER("check_insert_fields");
+  CLOG_FUNCTIOND("static int check_insert_fields(THD *thd, TABLE_LIST *table_list,...");
 
   if (!table_list->single_table_updatable())
   {
@@ -214,6 +216,7 @@ static int check_insert_fields(THD *thd, TABLE_LIST *table_list,
     DBUG_RETURN(-1);
   }
 
+  CLOG_TPRINTLN(" Fields.elements = %d,   Values.elements = %d",fields.elements, values.elements); 
   if (fields.elements == 0 && values.elements != 0)
   {
     if (!table)
@@ -715,8 +718,14 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   List_item *values;
   Name_resolution_context *context;
   Name_resolution_context_state ctx_state;
+
+  CLOG_TPRINTLN("===============================================");
+  CLOG_FUNCTIOND("mysql_insert(THD *thd,TABLE_LIST *table_list,...");
+  CLOG_TPRINTLN("===============================================");  
+  
 #ifndef EMBEDDED_LIBRARY
   char *query= thd->query();
+  CLOG_TPRINTLN(" QUERY STR = %s",query);
   /*
     log_on is about delayed inserts only.
     By default, both logs are enabled (this won't cause problems if the server
@@ -733,6 +742,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
     Upgrade lock type if the requested lock is incompatible with
     the current connection mode or table operation.
   */
+  CLOG_STEP("1","Upgrade lock type if the requested lock is incompatible with the current connection mode or table operation");
   upgrade_lock_type(thd, &table_list->lock_type, duplic);
 
   /*
@@ -749,6 +759,8 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
              table_list->table_name.str);
     DBUG_RETURN(TRUE);
   }
+
+  CLOG_STEP("2","open table &lock !");
 
   if (table_list->lock_type == TL_WRITE_DELAYED)
   {
@@ -769,6 +781,8 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
     DBUG_RETURN(TRUE);
   value_count= values->elements;
 
+  CLOG_STEP("3","Prepare items in INSERT statement");
+
   if (mysql_prepare_insert(thd, table_list, table, fields, values,
 			   update_fields, update_values, duplic, &unused_conds,
                            FALSE))
@@ -788,6 +802,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   DBUG_ASSERT(!context->first_name_resolution_table->next_name_resolution_table);
 
   /* Save the state of the current name resolution context. */
+  CLOG_STEP("4","Save the state of the current name resolution context.");
   ctx_state.save_state(context, table_list);
 
   /*
@@ -814,6 +829,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   its.rewind ();
  
   /* Restore the current context. */
+  CLOG_STEP("5","Restore the current context.");
   ctx_state.restore_state(context, table_list);
   
   if (thd->lex->unit.first_select()->optimize_unflattened_subqueries(false))
@@ -830,6 +846,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   /*
     Fill in the given fields and dump it to the table file
   */
+  CLOG_STEP("6","Fill in the given fields and dump it to the table file");
   bzero((char*) &info,sizeof(info));
   info.ignore= ignore;
   info.handle_duplicates=duplic;
@@ -843,6 +860,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
     For single line insert, generate an error if try to set a NOT NULL field
     to NULL.
   */
+  CLOG_STEP("7","Count warnings for all inserts.");
   thd->count_cuted_fields= ((values_list.elements == 1 &&
                              !ignore) ?
 			    CHECK_FIELD_ERROR_FOR_NULL :
@@ -876,6 +894,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
     values_list.elements, and - if nothing else - to initialize
     the code to make the call of end_bulk_insert() below safe.
   */
+   CLOG_STEP("8","Let's try to start bulk inserts.");
 #ifndef EMBEDDED_LIBRARY
   if (lock_type != TL_WRITE_DELAYED)
 #endif /* EMBEDDED_LIBRARY */
@@ -943,6 +962,7 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
   do
   {
     DBUG_PRINT("info", ("iteration %llu", iteration));
+	CLOG_TPRINTLN("info - iteration %llu", iteration);
     if (iteration && bulk_parameters_set(thd))
       goto abort;
 
@@ -1049,6 +1069,58 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
         break;
       }
 
+
+#ifdef TRUSTSQL_BUILD
+
+	  if(table->s->trusted_table_type!=0) {
+
+		  List_iterator_fast<Item> fields_it(fields);
+		  Item *inputfield;
+		  List<FOREIGN_KEY_INFO> f_key_list;
+		  List_iterator<FOREIGN_KEY_INFO> fk_list_it;
+		  FOREIGN_KEY_INFO *fki;
+		  List_iterator<LEX_CSTRING> ffield_it;
+		  LEX_CSTRING *ffield;
+		  bool next_input=false;
+		  // get Forekin_KEY_INFO from InnoDB
+		  table->file->get_foreign_key_list(thd, &f_key_list);
+		  fk_list_it = List_iterator<FOREIGN_KEY_INFO> (f_key_list);
+
+		  // find referenced field same with input field
+		  while(inputfield=fields_it++) {
+			CLOG_TPRINTLN(" Input field = %s",inputfield->name.str);
+			next_input=false;
+			while ((fki= fk_list_it++)) {
+			  ffield_it=  List_iterator<LEX_CSTRING> (fki->foreign_fields);
+			  while((ffield=ffield_it++)) {
+				  CLOG_TPRINTLN(" input field = %s,   ref field = %s",inputfield->name.str, ffield->str );
+				if(lex_string_cmp(system_charset_info, &inputfield->name, ffield) == 0) {
+				  CLOG_TPRINTLN("referenced_db=%s",fki->referenced_db->str);
+				  CLOG_TPRINTLN("referenced_table=%s",fki->referenced_table->str);
+				  CLOG_TPRINTLN("GOGOGO to Check the reference table is Trusted or Not!!!!");
+				  CLOG_TPRINTLN("GOGOGO to VERIFY the reference table's SIG is validation!!!");
+				  if(check_table_definition_trusted(thd, fki->referenced_db,fki->referenced_table, table->s->trust_options->table_issuer_pub_key)) {
+					  error=1;
+					  goto values_loop_end;
+				  }
+				  break;
+				}
+			  }
+			  ffield_it.rewind();
+			  if(next_input==true) break;
+			}
+			fk_list_it.rewind();
+		  }
+
+	  if(verify_record_sign(thd, table, fields,*values)) {
+		  error= 1;
+		  goto values_loop_end;
+	  }
+	}
+
+#endif
+
+
 #ifndef EMBEDDED_LIBRARY
       if (lock_type == TL_WRITE_DELAYED)
       {
@@ -1060,6 +1132,8 @@ bool mysql_insert(THD *thd,TABLE_LIST *table_list,
       }
       else
 #endif
+	  CLOG_STEP("9","write record!");
+
         error=write_record(thd, table ,&info);
       if (unlikely(error))
         break;
@@ -1197,6 +1271,7 @@ values_loop_end:
     inserted, the id of the last "inserted" row (if IGNORE, that value may not
     have been really inserted but ignored).
   */
+  CLOG_STEP("10","We'll report to the client this id:");
   id= (thd->first_successful_insert_id_in_cur_stmt > 0) ?
     thd->first_successful_insert_id_in_cur_stmt :
     (thd->arg_of_last_insert_id_function ?
@@ -1247,7 +1322,8 @@ values_loop_end:
     thd->lex->current_select->save_leaf_tables(thd);
     thd->lex->current_select->first_cond_optimization= 0;
   }
-  
+
+  CLOG_STEP("10"," end return !");
   DBUG_RETURN(FALSE);
 
 abort:
@@ -1376,6 +1452,7 @@ static bool mysql_prepare_insert_check_table(THD *thd, TABLE_LIST *table_list,
 {
   bool insert_into_view= (table_list->view != 0);
   DBUG_ENTER("mysql_prepare_insert_check_table");
+  CLOG_FUNCTIOND("static bool mysql_prepare_insert_check_table(THD *thd, TABLE_LIST *table_list,...");
 
   if (!table_list->single_table_updatable())
   {
@@ -1484,6 +1561,10 @@ bool mysql_prepare_insert(THD *thd, TABLE_LIST *table_list,
   DBUG_PRINT("enter", ("table_list: %p  table: %p  view: %d",
 		       table_list, table,
 		       (int)insert_into_view));
+  CLOG_FUNCTIOND("bool mysql_prepare_insert(THD *thd, TABLE_LIST *table_list,...");
+  CLOG_TPRINTLN("enter - table_list: %p  table: %p  view: %d", table_list, table, (int)insert_into_view);
+
+  
   /* INSERT should have a SELECT or VALUES clause */
   DBUG_ASSERT (!select_insert || !values);
 
@@ -1683,7 +1764,10 @@ int write_record(THD *thd, TABLE *table,COPY_INFO *info)
   ulonglong insert_id_for_cur_row= 0;
   ulonglong prev_insert_id_for_cur_row= 0;
   DBUG_ENTER("write_record");
-
+  CLOG_TPRINTLN("--------------------------------------------------------------");
+  CLOG_FUNCTIOND("int write_record(THD *thd, TABLE *table,COPY_INFO *info)");
+  CLOG_TPRINTLN("--------------------------------------------------------------");
+  
   info->records++;
   save_read_set=  table->read_set;
   save_write_set= table->write_set;
@@ -2065,6 +2149,8 @@ before_trg_err:
 int check_that_all_fields_are_given_values(THD *thd, TABLE *entry, TABLE_LIST *table_list)
 {
   int err= 0;
+  CLOG_FUNCTIOND("int check_that_all_fields_are_given_values(THD *thd, TABLE *entry, TABLE_LIST *table_list)");
+  
   MY_BITMAP *write_set= entry->write_set;
 
   for (Field **field=entry->field ; *field ; field++)

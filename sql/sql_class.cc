@@ -28,6 +28,9 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
+
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_class.h"
@@ -125,6 +128,7 @@ bool Key_part_spec::operator==(const Key_part_spec& other) const
          !lex_string_cmp(system_charset_info, &field_name,
                          &other.field_name);
 }
+
 
 /**
   Construct an (almost) deep copy of this key. Only those
@@ -653,6 +657,8 @@ THD::THD(my_thread_id id, bool is_wsrep_applier, bool skip_global_sys_var_lock)
 {
   ulong tmp;
   bzero(&variables, sizeof(variables));
+
+  CLOG_FUNCTIOND("THD::THD(my_thread_id id, bool is_wsrep_applier, bool skip_global_sys_var_lock)");
 
   /*
     We set THR_THD to temporally point to this THD to register all the
@@ -1590,6 +1596,8 @@ THD::~THD()
   THD *orig_thd= current_thd;
   THD_CHECK_SENTRY(this);
   DBUG_ENTER("~THD()");
+  CLOG_FUNCTIOND("THD::~THD()");
+
   /* Check that we have already called thd->unlink() */
   DBUG_ASSERT(prev == 0 && next == 0);
   /* This takes a long time so we should not do this under LOCK_thread_count */
@@ -1662,6 +1670,7 @@ THD::~THD()
   if (status_var.local_memory_used != 0)
   {
     DBUG_PRINT("error", ("memory_used: %lld", status_var.local_memory_used));
+    CLOG_TPRINTLN("error  memory_used: %lld", status_var.local_memory_used);
     SAFEMALLOC_REPORT_MEMORY(thread_id);
     DBUG_ASSERT(status_var.local_memory_used == 0 ||
                 !debug_assert_on_not_freed_memory);

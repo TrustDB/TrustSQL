@@ -1,4 +1,4 @@
-# Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+﻿# Copyright (c) 2006, 2017, Oracle and/or its affiliates.
 # Copyright (c) 2008, 2018, MariaDB Corporation
 # 
 # This program is free software; you can redistribute it and/or modify
@@ -92,16 +92,30 @@ ENDIF()
 # Linux-2.6.28-11-generic, it will pick Linux-2.6.28-11-generic and
 # include it. It is then up to the file writer to include the generic
 # version if necessary.
+
 FOREACH(_base
     ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_VERSION}-${CMAKE_SYSTEM_PROCESSOR}
     ${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_VERSION}
     ${CMAKE_SYSTEM_NAME})
-  SET(_file ${CMAKE_SOURCE_DIR}/cmake/os/${_base}.cmake)
+  SET(_file ${CMAKE_SOURCE_DIR}/cmake/os/${_base}.cmake)  
   IF(EXISTS ${_file})
     INCLUDE(${_file})
     BREAK()
   ENDIF()
 ENDFOREACH()
+
+#TRUSTSQL BUILD !!!
+IF(DEFINED CMAKE_TRUSTSQL_BUILD)
+	IF (CMAKE_TRUSTSQL_BUILD MATCHES "DEBUG")
+		MESSAGE(STATUS "[TRACE] TRUSTSQL BUILD IN DEBUG")
+		add_compile_options(-DTRUSTSQL_BUILD)
+		add_compile_options(-DTRUSTSQL_DEBUG)
+	ELSE()
+		MESSAGE(STATUS "[TRACE] TRUSTSQL BUILD IN NORMAL")
+		add_compile_options(-DTRUSTSQL_BUILD)
+  	ENDIF()
+ENDIF() 
+#TRUST BUILD !!!
 
 FOREACH(tool gtar tar)
  STRING(TOUPPER ${tool}  TOOL)
@@ -113,7 +127,8 @@ FIND_PACKAGE(Git)
 
 # Following autotools tradition, add preprocessor definitions
 # specified in environment variable CPPFLAGS
-IF(DEFINED ENV{CPPFLAGS})
+# ADD_DEFINITIONS - Adds definitions to the compiler command line for targets in the current directory and below.
+IF(DEFINED ENV{CPPFLAGS})  
   ADD_DEFINITIONS($ENV{CPPFLAGS})
 ENDIF()
 
@@ -130,6 +145,9 @@ IF (NOT CPACK_GENERATOR)
     SET(CPACK_GENERATOR "TGZ")
   ENDIF(WIN32) 
 ENDIF(NOT CPACK_GENERATOR)
+
+#include : load and run CMake code from the file given.
+# if a module is specified instead of a file, the file with name <modulename>.cmake is searched first in CMAKE_MODULE_PATH
 
 INCLUDE(misc)
 INCLUDE(mysql_version)
@@ -157,6 +175,8 @@ INCLUDE(compile_flags)
 INCLUDE(crc32)
 
 # Handle options
+# [command] option : Provide an option for the user to select as ON or OFF. Default is OFF.
+
 OPTION(DISABLE_SHARED 
  "Don't build shared libraries, compile code as position-dependent" OFF)
 IF(DISABLE_SHARED)
@@ -353,6 +373,8 @@ ENDIF()
 #
 INCLUDE(maintainer)
 
+#[command]ADD_SUBDIRECTORY : Add a subdirectory to the build. The source_dir specifies the directory in which the source CMakeLists.tst and code files are located.
+
 IF(WITH_UNIT_TESTS)
  ENABLE_TESTING()
  ADD_SUBDIRECTORY(unittest/mytap)
@@ -432,10 +454,19 @@ IF(NOT CMAKE_CROSSCOMPILING)
   EXPORT(TARGETS ${EXPORTED} FILE ${CMAKE_BINARY_DIR}/import_executables.cmake)
 ENDIF()
 
+#[command]CONFIGURE_FILE : Copies an <input> file to an <output>fiel and substitutes variable values referenced as @VAR@ or @{VAR}
+
 CONFIGURE_FILE(config.h.cmake   ${CMAKE_BINARY_DIR}/include/my_config.h)
 CONFIGURE_FILE(config.h.cmake   ${CMAKE_BINARY_DIR}/include/config.h)
+
+IF(DEFINED CMAKE_TRUSTSQL_BUILD)
+CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/include/trustsql_version.h.in
+               ${CMAKE_BINARY_DIR}/include/mysql_version.h )
+ELSE()
 CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/include/mysql_version.h.in
                ${CMAKE_BINARY_DIR}/include/mysql_version.h )
+ENDIF() 
+
 CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/sql/sql_builtin.cc.in
     ${CMAKE_BINARY_DIR}/sql/sql_builtin.cc)
 

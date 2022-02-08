@@ -46,6 +46,7 @@ This file contains the implementation of error and warnings related
 #include "unireg.h"
 #include "sql_error.h"
 #include "sp_rcontext.h"
+#include "sql_error.h"
 
 /*
   Design notes about Sql_condition::m_message_text.

@@ -23,6 +23,8 @@
 #include "mariadb.h"
 #include "mysqld.h"
 #include "sql_priv.h"
+
+#include "clog.h"
 #ifndef __WIN__
 #include <netdb.h>        // getservbyname, servent
 #endif
@@ -1301,6 +1303,7 @@ void prepare_new_connection_state(THD* thd)
 
 pthread_handler_t handle_one_connection(void *arg)
 {
+  CLOG_FUNCTIOND("pthread_handler_t handle_one_connection(void *arg)");
   CONNECT *connect= (CONNECT*) arg;
 
   mysql_thread_set_psi_id(connect->thread_id);
@@ -1340,6 +1343,7 @@ bool thd_is_connection_alive(THD *thd)
 
 void do_handle_one_connection(CONNECT *connect)
 {
+  CLOG_FUNCTIOND("void do_handle_one_connection(CONNECT *connect)");
   ulonglong thr_create_utime= microsecond_interval_timer();
   THD *thd;
   if (connect->scheduler->init_new_connection_thread() ||
@@ -1398,6 +1402,7 @@ void do_handle_one_connection(CONNECT *connect)
 
     while (thd_is_connection_alive(thd))
     {
+      CLOG_PRINTLN("\n====================================================================\n");
       mysql_audit_release(thd);
       if (do_command(thd))
 	break;
@@ -1489,7 +1494,7 @@ THD *CONNECT::create_thd(THD *thd)
 {
   bool res, thd_reused= thd != 0;
   DBUG_ENTER("create_thd");
-
+  CLOG_FUNCTIOND("THD *CONNECT::create_thd(THD *thd)");
   DBUG_EXECUTE_IF("simulate_failed_connection_2", DBUG_RETURN(0); );
 
   if (thd)

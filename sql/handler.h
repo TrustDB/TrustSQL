@@ -25,6 +25,8 @@
 #pragma interface			/* gcc class implementation */
 #endif
 
+#include "clog.h"
+
 #include "sql_const.h"
 #include "sql_basic_types.h"
 #include "mysqld.h"                             /* server_id */
@@ -419,6 +421,12 @@ enum enum_alter_inplace_result {
 #define HA_CREATE_TMP_ALTER     8U
 #define HA_LEX_CREATE_SEQUENCE  16U
 #define HA_VERSIONED_TABLE      32U
+
+/* Trusted Ledger */
+#ifdef TRUSTSQL_BUILD
+#define HA_LEX_CREATE_TRUSTED_TABLE  128U
+#define HA_LEX_CREATE_TRUSTED_ORDERED_TABLE  256U
+#endif
 
 #define HA_MAX_REC_LENGTH	65535
 
@@ -992,6 +1000,11 @@ enum enum_schema_tables
   SCH_GEOMETRY_COLUMNS,
   SCH_SPATIAL_REF_SYS,
 #endif /*HAVE_SPATIAL*/
+#ifdef TRUSTSQL_BUILD
+  SCH_SIG_COLUMN_USAGE,
+  SCH_SIG_REFERENTIAL_CONSTRAINTS
+#endif
+
 };
 
 struct TABLE_SHARE;
@@ -4737,9 +4750,16 @@ bool ha_flush_logs(handlerton *db_type);
 void ha_drop_database(char* path);
 void ha_checkpoint_state(bool disable);
 void ha_commit_checkpoint_request(void *cookie, void (*pre_hook)(void *));
+
 int ha_create_table(THD *thd, const char *path,
                     const char *db, const char *table_name,
                     HA_CREATE_INFO *create_info, LEX_CUSTRING *frm);
+#ifdef TRUSTSQL_BUILD
+int ha_create_trusted_table(THD *thd, const char *path,
+                    const char *db, const char *table_name,
+                    HA_CREATE_INFO *create_info, LEX_CUSTRING *frm, LEX_CUSTRING *tld);
+#endif
+
 int ha_delete_table(THD *thd, handlerton *db_type, const char *path,
                     const LEX_CSTRING *db, const LEX_CSTRING *alias, bool generate_warning);
 

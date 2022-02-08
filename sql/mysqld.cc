@@ -14,6 +14,10 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA */
 
+#ifdef TRUSTSQL_DEBUG
+#include <clog.h>
+#endif
+
 #include "sql_plugin.h"                         // Includes mariadb.h
 #include "sql_priv.h"
 #include "unireg.h"
@@ -3391,6 +3395,7 @@ void init_signals(void)
 {
   sigset_t set;
   struct sigaction sa;
+  CLOG_FUNCTIOND("void init_signals(void)");
   DBUG_ENTER("init_signals");
 
   my_sigset(THR_SERVER_ALARM,print_signal_warning); // Should never be called!
@@ -3469,6 +3474,7 @@ static void start_signal_handler(void)
 {
   int error;
   pthread_attr_t thr_attr;
+  CLOG_FUNCTIOND("static void start_signal_handler(void)");
   DBUG_ENTER("start_signal_handler");
 
   (void) pthread_attr_init(&thr_attr);
@@ -4076,7 +4082,8 @@ extern "C" my_thread_id mariadb_dbug_id()
 extern "C" {
 static void my_malloc_size_cb_func(long long size, my_bool is_thread_specific)
 {
-  THD *thd= current_thd;
+   //ZLOG_FUNCTIOND("static void my_malloc_size_cb_func(long long size, my_bool is_thread_specific)");
+	THD *thd= current_thd;
 
   /*
     When thread specific is set, both mysqld_server_initialized and thd
@@ -4164,6 +4171,8 @@ rpl_make_log_name(const char *opt,
 
 static int init_early_variables()
 {
+  CLOG_FUNCTIOND("static int init_early_variables()");
+  CLOG_TPRINTLN("We have to setup my_malloc_size_cb_func early to catch all mallocs");
   if (pthread_key_create(&THR_THD, NULL))
   {
     fprintf(stderr, "Fatal error: Can't create thread-keys\n");
@@ -4178,6 +4187,7 @@ static int init_early_variables()
 
 static int init_common_variables()
 {
+  CLOG_FUNCTIOND("static int init_common_variables()");
   umask(((~my_umask) & 0666));
   connection_errors_select= 0;
   connection_errors_accept= 0;
@@ -5071,6 +5081,7 @@ init_gtid_pos_auto_engines(void)
 static int init_server_components()
 {
   DBUG_ENTER("init_server_components");
+  CLOG_FUNCTIOND("init server components");
   /*
     We need to call each of these following functions to ensure that
     all things are initialized so that unireg_abort() doesn't fail
@@ -5764,6 +5775,7 @@ int win_main(int argc, char **argv)
 int mysqld_main(int argc, char **argv)
 #endif
 {
+	CLOG_FUNCTIOND("int mysqld_main(int argc, char **argv)")
 #ifndef _WIN32
   /* We can't close stdin just now, because it may be booststrap mode. */
   bool please_close_stdin= fcntl(STDIN_FILENO, F_GETFD) >= 0;
@@ -5774,9 +5786,15 @@ int mysqld_main(int argc, char **argv)
     to be able to read defaults files and parse options.
   */
   my_progname= argv[0];
+  for (int i = 0; i < argc; i++)
+  {
+         CLOG_TPRINTLN("ARG[%d] = %s", i,argv[i]);
+  }
+
   sf_leaking_memory= 1; // no safemalloc memory leak reports if we exit early
   mysqld_server_started= mysqld_server_initialized= 0;
 
+  CLOG_STEP("1","Intialize early variables : we have to setup my_alloc_size_cb_func early to catch mallocs");
   if (init_early_variables())
     exit(1);
 
@@ -5785,6 +5803,7 @@ int mysqld_main(int argc, char **argv)
 #endif
 #ifndef _WIN32
   // For windows, my_init() is called from the win specific mysqld_main
+  CLOG_STEP("2","Intialize my_sys functions, resources and variables");
   if (my_init())                 // init my_sys library & pthreads
   {
     fprintf(stderr, "my_init() failed.");
@@ -5804,19 +5823,21 @@ int mysqld_main(int argc, char **argv)
 
   /* Must be initialized early for comparison of options name */
   system_charset_info= &my_charset_utf8_general_ci;
-
+  CLOG_STEP("3","Must be already initialized...");
   sys_var_init();
 
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
   /*
     Initialize the array of performance schema instrument configurations.
   */
+  CLOG_STEP("4","Initialize the array of performance schema instrument configurations.");
   init_pfs_instrument_array();
 #endif /* WITH_PERFSCHEMA_STORAGE_ENGINE */
   /*
     Logs generated while parsing the command line
     options are buffered and printed later.
   */
+  CLOG_STEP("5","Intialize log & timer * handle...");
   buffered_logs.init();
   my_getopt_error_reporter= buffered_option_error_reporter;
   my_charset_error_reporter= buffered_option_error_reporter;
@@ -5828,12 +5849,15 @@ int mysqld_main(int argc, char **argv)
   int ho_error __attribute__((unused))= handle_early_options();
 
   /* fix tdc_size */
+  CLOG_STEP("5-1","Fix tdc_size");
   if (IS_SYSVAR_AUTOSIZE(&tdc_size))
   {
     SYSVAR_AUTOSIZE(tdc_size, MY_MIN(400 + tdc_size / 2, 2000));
   }
+  CLOG_TPRINTLN("tdc_size = %lu",tdc_size);
 
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
+  CLOG_STEP("5-2","Performance Schema Init");
   if (ho_error == 0)
   {
     if (pfs_param.m_enabled  && !opt_help && !opt_bootstrap)
@@ -5869,6 +5893,7 @@ int mysqld_main(int argc, char **argv)
     Obtain the current performance schema instrumentation interface,
     if available.
   */
+  CLOG_STEP("5-3","Obtain the current performance schema instrumentation interface, if available");
   if (PSI_hook)
   {
     PSI *psi_server= (PSI*) PSI_hook->get_interface(PSI_CURRENT_VERSION);
@@ -5895,16 +5920,18 @@ int mysqld_main(int argc, char **argv)
     }
   }
 #endif /* HAVE_PSI_INTERFACE */
-
+  CLOG_STEP("5-4","Initialize error log mutex");
   init_error_log_mutex();
 
   /* Initialize audit interface globals. Audit plugins are inited later. */
+
   mysql_audit_initialize();
 
   /*
     Perform basic logger initialization logger. Should be called after
     MY_INIT, as it initializes mutexes. Log tables are inited later.
   */
+  CLOG_STEP("5-5","Perform basic logger initiailization logger. Should be called after MY_INIT");
   logger.init_base();
 
 #ifdef WITH_PERFSCHEMA_STORAGE_ENGINE
@@ -5919,6 +5946,7 @@ int mysqld_main(int argc, char **argv)
       - messages will be printed to stderr, which is not redirected yet,
       - messages will be printed in the NT event log, for windows.
     */
+	CLOG_STEP("5-6","Parsing command line option failed,....");
     buffered_logs.print();
     buffered_logs.cleanup();
     /*
@@ -5936,10 +5964,11 @@ int mysqld_main(int argc, char **argv)
     exit(1);
   }
 #endif
-
+  CLOG_STEP("6","Initialize Common Variables");
   if (init_common_variables())
     unireg_abort(1);				// Will do exit
 
+  CLOG_STEP("7","Initialize Signals");
   init_signals();
 
   ulonglong new_thread_stack_size;
@@ -5966,13 +5995,16 @@ int mysqld_main(int argc, char **argv)
   /*
     We have enough space for fiddling with the argv, continue
   */
+  CLOG_STEP("8","We have enough space for fiddling with the argv, continue");
+  CLOG_TPRINTLN("mysql_real_data_home = %s",mysql_real_data_home);
   check_data_home(mysql_real_data_home);
   if (my_setwd(mysql_real_data_home, opt_abort ? 0 : MYF(MY_WME)) && !opt_abort)
     unireg_abort(1);				/* purecov: inspected */
 
   /* Atomic write initialization must be done as root */
+  CLOG_STEP("9","Atomic write initialization must be done as root");
   my_init_atomic_write();
-
+  CLOG_TPRINTLN("mysqld_user = %s",mysqld_user);
   if ((user_info= check_user(mysqld_user)))
   {
 #if defined(HAVE_MLOCKALL) && defined(MCL_CURRENT)
@@ -5994,10 +6026,13 @@ int mysqld_main(int argc, char **argv)
   Service.SetSlowStarting(slow_start_timeout);
 #endif
 
+  CLOG_STEP("10","Initialize Server Components");
   if (init_server_components())
     unireg_abort(1);
 
+  CLOG_STEP("11","Initialize SSL");
   init_ssl();
+  CLOG_STEP("12","Initialize Network");
   network_init();
 
 #ifdef __WIN__
@@ -6030,8 +6065,10 @@ int mysqld_main(int argc, char **argv)
     init signals & alarm
     After this we can't quit by a simple unireg_abort
   */
+  CLOG_STEP("13","init signals & alarm, after this we can't quit by a simple unireg_abort");
   start_signal_handler();				// Creates pidfile
 
+  CLOG_STEP("14","Remove tmp files, intialize ACL and TimeZone struct");
   if (mysql_rm_tmp_tables() || acl_init(opt_noacl) ||
       my_tz_init((THD *)0, default_tz_name, opt_bootstrap))
   {
@@ -6047,9 +6084,11 @@ int mysqld_main(int argc, char **argv)
     exit(1);
   }
 
+  CLOG_STEP("15","Initialize structures responsible for table/column-level privilege");
   if (!opt_noacl)
     (void) grant_init();
 
+  CLOG_STEP("16","Read all predeclared functions from mysql.func and accept all that can be used. ");
   udf_init();
 
   if (opt_bootstrap) /* If running with bootstrap, do not start replication. */
@@ -6061,14 +6100,17 @@ int mysqld_main(int argc, char **argv)
   initialize_performance_schema_acl(opt_bootstrap);
 #endif
 
+  CLOG_STEP("17","initialize_information_schema_acl");
   initialize_information_schema_acl();
 
+  CLOG_STEP("18","Execute the ddl log at recovery of MySQL Server");
   execute_ddl_log_recovery();
 
   /*
     Change EVENTS_ORIGINAL to EVENTS_OFF (the default value) as there is no
     point in using ORIGINAL during startup
   */
+  CLOG_STEP("19","Evetns::init()");
   if (Events::opt_event_scheduler == Events::EVENTS_ORIGINAL)
     Events::opt_event_scheduler= Events::EVENTS_OFF;
 
@@ -6076,6 +6118,7 @@ int mysqld_main(int argc, char **argv)
   if (Events::init((THD*) 0, opt_noacl || opt_bootstrap))
     unireg_abort(1);
 
+  CLOG_STEP("20","bootstrap mode ???");
   if (WSREP_ON)
   {
     if (opt_bootstrap)
@@ -6109,6 +6152,7 @@ int mysqld_main(int argc, char **argv)
   if (opt_bootstrap)
   {
     select_thread_in_use= 0;                    // Allow 'kill' to work
+
     bootstrap(mysql_stdin);
     if (!kill_in_progress)
       unireg_abort(bootstrap_error ? 1 : 0);
@@ -6119,7 +6163,10 @@ int mysqld_main(int argc, char **argv)
     }
   }
 
+  CLOG_STEP("21","create_shutdown_thread");
   create_shutdown_thread();
+
+  CLOG_STEP("22","Start Handle Manager Thread");
   start_handle_manager();
 
   /* Copy default global rpl_filter to global_rpl_filter */
@@ -6131,6 +6178,7 @@ int mysqld_main(int argc, char **argv)
     places) assume that active_mi != 0, so let's fail if it's 0 (out of
     memory); a message has already been printed.
   */
+  CLOG_STEP("23","init_slave() must be called after the thread keys are created.");
   if (init_slave() && !active_mi)
   {
     unireg_abort(1);
@@ -6178,6 +6226,7 @@ int mysqld_main(int argc, char **argv)
 #endif
 
   /* Signal threads waiting for server to be started */
+  CLOG_STEP("24","Signal threads waiting for server to be started");
   mysql_mutex_lock(&LOCK_server_started);
   mysqld_server_started= 1;
   mysql_cond_signal(&COND_server_started);
@@ -6191,11 +6240,16 @@ int mysqld_main(int argc, char **argv)
 #if defined(_WIN32) || defined(HAVE_SMEM)
   handle_connections_methods();
 #else
+  CLOG_TPRINTLN("------------------------------------------------------");
+  CLOG_STEP("25","!!!!   handle_connections_sockets   !!!!!");
+  CLOG_TPRINTLN("------------------------------------------------------");
   handle_connections_sockets();
 #endif /* _WIN32 || HAVE_SMEM */
 
   /* (void) pthread_attr_destroy(&connection_attrib); */
-
+  CLOG_TPRINTLN("------------------------------------------------------");
+  CLOG_STEP("26","!!!!   Exiting main thread   !!!!!");
+  CLOG_TPRINTLN("------------------------------------------------------");
   DBUG_PRINT("quit",("Exiting main thread"));
 
 #ifndef __WIN__
@@ -6458,6 +6512,9 @@ int mysqld_main(int argc, char **argv)
 static void bootstrap(MYSQL_FILE *file)
 {
   DBUG_ENTER("bootstrap");
+  CLOG_FUNCTIOND("static void bootstrap(MYSQL_FILE *file)");
+  CLOG_TPRINTLN("file.m_file= 0x%08X",file->m_file);
+  CLOG_TPRINTLN("file.m_psi= 0x%08X",file->m_psi);
 
   THD *thd= new THD(next_thread_id());
 #ifdef WITH_WSREP
@@ -6542,11 +6599,16 @@ void handle_connection_in_main_thread(CONNECT *connect)
 
 void create_thread_to_handle_connection(CONNECT *connect)
 {
+
   char error_message_buff[MYSQL_ERRMSG_SIZE];
   int error;
+  CLOG_FUNCTIOND("void create_thread_to_handle_connection(CONNECT *connect)");
+  CLOG_TPRINTLN("Scheduler that uses one thread per connection");
   DBUG_ENTER("create_thread_to_handle_connection");
 
   /* Check if we can get thread from the cache */
+  CLOG_STEP("1","Check if we can get thread from the cache");
+  CLOG_TPRINTLN("cached_thread_count(%d), wake_thread(%d)",cached_thread_count,wake_thread);
   if (cached_thread_count > wake_thread)
   {
     mysql_mutex_lock(&LOCK_thread_cache);
@@ -6554,6 +6616,8 @@ void create_thread_to_handle_connection(CONNECT *connect)
     if (cached_thread_count > wake_thread)
     {
       /* Get thread from cache */
+      CLOG_STEP("1-1","Get thread from cache");
+      CLOG_TPRINTLN("thread_cache.push_back(connect);");
       thread_cache.push_back(connect);
       wake_thread++;
       mysql_cond_signal(&COND_thread_cache);
@@ -6565,8 +6629,10 @@ void create_thread_to_handle_connection(CONNECT *connect)
   }
 
   /* Create new thread to handle connection */
+  CLOG_STEP("2","Create new thread to handle connection");
   inc_thread_created();
   DBUG_PRINT("info",(("creating thread %lu"), (ulong) connect->thread_id));
+  CLOG_TPRINTLN(" info - creating thread %lu", (ulong) connect->thread_id);
   connect->prior_thr_create_utime= microsecond_interval_timer();
 
   if ((error= mysql_thread_create(key_thread_one_connection,
@@ -6604,19 +6670,21 @@ void create_thread_to_handle_connection(CONNECT *connect)
 static void create_new_thread(CONNECT *connect)
 {
   DBUG_ENTER("create_new_thread");
+  CLOG_FUNCTIOND("static void create_new_thread(CONNECT *connect)");
 
   /*
     Don't allow too many connections. We roughly check here that we allow
     only (max_connections + 1) connections.
   */
-
+  CLOG_STEP("1","Don't allow too many connections. We roughly check here taht we allow only (max_connections+1) connections");
   mysql_mutex_lock(&LOCK_connection_count);
 
+  CLOG_TPRINTLN("connection_count(%d), max_connections+1(%d)",*connect->scheduler->connection_count,*connect->scheduler->max_connections + 1);
   if (*connect->scheduler->connection_count >=
       *connect->scheduler->max_connections + 1|| abort_loop)
   {
     DBUG_PRINT("error",("Too many connections"));
-
+    CLOG_TPRINTLN("error , Too many connections");
     mysql_mutex_unlock(&LOCK_connection_count);
     statistic_increment(denied_connections, &LOCK_status);
     statistic_increment(connection_errors_max_connection, &LOCK_status);
@@ -6638,6 +6706,7 @@ static void create_new_thread(CONNECT *connect)
     the embedded library.
     TODO: refactor this to avoid code duplication there
   */
+  CLOG_STEP("2","The initialization of thread_id is done in create_embedded_thd() for embedded library");
   connect->thread_id= next_thread_id();
   connect->scheduler->add_connection(connect);
 
@@ -6671,6 +6740,7 @@ inline void kill_broken_server()
 
 void handle_connections_sockets()
 {
+  CLOG_FUNCTIOND("void handle_connections_sockets()");
   MYSQL_SOCKET sock= mysql_socket_invalid();
   MYSQL_SOCKET new_sock= mysql_socket_invalid();
   uint error_count=0;
@@ -6698,20 +6768,35 @@ void handle_connections_sockets()
 #endif
 
   DBUG_ENTER("handle_connections_sockets");
-
+  CLOG_STEP("1","Get FD - global vars");
+  CLOG_STEP("1-1","setup fds with base_ip_sock");
   if (mysql_socket_getfd(base_ip_sock) != INVALID_SOCKET)
   {
     setup_fds(base_ip_sock);
+    CLOG_TPRINTLN("fds[%d].fd = %d",socket_count-1,fds[(socket_count-1)].fd);
+    CLOG_TPRINTLN("fds[%d].events= %d;",socket_count-1,fds[(socket_count-1)].events);
+    CLOG_TPRINTLN("socket_count = %d",socket_count);
     ip_flags = fcntl(mysql_socket_getfd(base_ip_sock), F_GETFL, 0);
+    CLOG_TPRINTLN("ip_flags = %d",ip_flags);
   }
+  CLOG_STEP("1-2","extra_ip_sock");
   if (mysql_socket_getfd(extra_ip_sock) != INVALID_SOCKET)
   {
     setup_fds(extra_ip_sock);
+    CLOG_TPRINTLN("fds[%d].fd = %d",socket_count-1,fds[(socket_count-1)].fd);
+    CLOG_TPRINTLN("fds[%d].events= %d;",socket_count-1,fds[(socket_count-1)].events);
+    CLOG_TPRINTLN("socket_count = %d",socket_count);
     extra_ip_flags = fcntl(mysql_socket_getfd(extra_ip_sock), F_GETFL, 0);
+    CLOG_TPRINTLN("extra_ip_flags = %d",extra_ip_flags);
   }
 #ifdef HAVE_SYS_UN_H
+  CLOG_STEP("1-3","unix_sock");
   setup_fds(unix_sock);
+  CLOG_TPRINTLN("fds[%d].fd = %d",socket_count-1,fds[(socket_count-1)].fd);
+  CLOG_TPRINTLN("fds[%d].events= %d;",socket_count-1,fds[(socket_count-1)].events);
+  CLOG_TPRINTLN("socket_count = %d",socket_count);
   socket_flags=fcntl(mysql_socket_getfd(unix_sock), F_GETFL, 0);
+  CLOG_TPRINTLN("socket_flags = %d",socket_flags);
 #endif
 
   sd_notify(0, "READY=1\n"
@@ -6719,15 +6804,24 @@ void handle_connections_sockets()
 
   DBUG_PRINT("general",("Waiting for connections."));
   MAYBE_BROKEN_SYSCALL;
+
+  CLOG_STEP("2","while_POOL -----------------------");
   while (!abort_loop)
   {
 #ifdef HAVE_POLL
-    retval= poll(fds, socket_count, -1);
+	CLOG_STEP("2-1","while_loop pool -----------------------");
+    retval= poll(fds, socket_count, -1);  // 무한대기 -1
+    CLOG_TPRINTLN("retval(%d) = poll (fds, %d, -1)",retval,socket_count);
 #else
     readFDs=clientFDs;
     retval= select((int) 0,&readFDs,0,0,0);
 #endif
-
+    /* poll return value
+     * 0 = No evnets
+     * >0 = number of structures which has nonzero values
+     * -1 = fail (error)
+     */
+    CLOG_STEP("2-2","error handling");
     if (retval < 0)
     {
       if (socket_errno != SOCKET_EINTR)
@@ -6751,14 +6845,27 @@ void handle_connections_sockets()
       break;
     }
 
-    /* Is this a new connection request ? */
+    /* Is this a new connection request ?
+     * POLL EVENTS
+     *   POLLIN : 잃기 버퍼에 대이터가 있다. (TCP의 연결요청도 읽기 데이터에 포함됨)
+     *   POLLPRI : 우선순위 데이터를 사용한다.
+     *   POLLOUT : 쓰기 버퍼가 사용가능한 상태(넌블록킹으로 connect를 호출했을 때 연결이 완료되었는지 확인도 가능)
+     *   PLLLERR : 연결에 에러가 발생함
+     *   POLLHUP : 닫힌 연결에 쓰기 시도 감지
+     *   POLLNVAL : 무효한 파일기술자를 지정한 에러 (연결되지 않은 파일기술자를 지정함)
+     * */
 #ifdef HAVE_POLL
+    CLOG_STEP("2-3","Is this a new Connection request?");
     for (int i= 0; i < socket_count; ++i) 
     {
+      CLOG_TPRINTLN("socket_count = %d, events = 0x%08X, revents = 0x%08X",i,fds[i].events, fds[i].revents);
       if (fds[i].revents & POLLIN)
       {
+    	// 헛. 이건 머지.. pfs가 나오네.
         sock= pfs_fds[i];
+        CLOG_TPRINTLN("mysql_socket_getfd(sock)=%d",mysql_socket_getfd(sock));
         flags= fcntl(mysql_socket_getfd(sock), F_GETFL, 0);
+        CLOG_TPRINTLN("flags = 0x%08X", flags);
         break;
       }
     }
@@ -6791,12 +6898,14 @@ void handle_connections_sockets()
 #endif
     }
 #endif /* NO_FCNTL_NONBLOCK */
+    CLOG_STEP("2-4","Accept!");
     for (uint retry=0; retry < MAX_ACCEPT_RETRY; retry++)
     {
       size_socket length= sizeof(struct sockaddr_storage);
       new_sock= mysql_socket_accept(key_socket_client_connection, sock,
                                     (struct sockaddr *)(&cAddr),
                                     &length);
+      CLOG_TPRINTLN("mysql_socket_getfd(new_sock)=%d",mysql_socket_getfd(new_sock));
       if (mysql_socket_getfd(new_sock) != INVALID_SOCKET ||
 	  (socket_errno != SOCKET_EINTR && socket_errno != SOCKET_EAGAIN))
 	break;
@@ -6807,6 +6916,7 @@ void handle_connections_sockets()
 	if (retry == MAX_ACCEPT_RETRY - 1)
         {
           // Try without O_NONBLOCK
+		CLOG_TPRINTLN("fcntl set, flags=0x%08X,flags");
 	  fcntl(mysql_socket_getfd(sock), F_SETFL, flags);
         }
       }
@@ -6816,6 +6926,7 @@ void handle_connections_sockets()
     if (!(test_flags & TEST_BLOCKING))
       fcntl(mysql_socket_getfd(sock), F_SETFL, flags);
 #endif
+    CLOG_STEP("2-5","Accept Fail check..");
     if (mysql_socket_getfd(new_sock) == INVALID_SOCKET)
     {
       /*
@@ -6879,7 +6990,7 @@ void handle_connections_sockets()
 #endif /* HAVE_LIBWRAP */
 
     DBUG_PRINT("info", ("Creating CONNECT for new connection"));
-
+    CLOG_STEP("2-6","Creating CONNECT for new connection");
     if ((connect= new CONNECT()))
     {
       is_unix_sock= (mysql_socket_getfd(sock) ==
@@ -6899,6 +7010,7 @@ void handle_connections_sockets()
     if (!connect)
     {
       /* Connect failure */
+      CLOG_STEP("2-6-1","Connect failure");
       (void) mysql_socket_shutdown(new_sock, SHUT_RDWR);
       (void) mysql_socket_close(new_sock);
       statistic_increment(aborted_connects,&LOCK_status);
@@ -6914,10 +7026,12 @@ void handle_connections_sockets()
       connect->extra_port= 1;
       connect->scheduler= extra_thread_scheduler;
     }
+    CLOG_STEP("2-6-2","create_new_thread!!");
     create_new_thread(connect);
   }
   sd_notify(0, "STOPPING=1\n"
             "STATUS=Shutdown in progress\n");
+  CLOG_TPRINTLN("STOPPING=1\n   STATUS=Shutdown in progress\n");
   DBUG_VOID_RETURN;
 }
 
@@ -7292,6 +7406,7 @@ int handle_early_options()
 {
   int ho_error;
   DYNAMIC_ARRAY all_early_options;
+  CLOG_FUNCTIOND("int handle_early_options()");
 
   my_getopt_register_get_addr(NULL);
   /* Skip unknown options so that they may be processed later */
@@ -10718,6 +10833,7 @@ static void recalculate_thread_id_range(my_thread_id *low, my_thread_id *high)
 
 my_thread_id next_thread_id(void)
 {
+  CLOG_FUNCTIOND("my_thread_id next_thread_id(void)");
   my_thread_id retval;
   DBUG_EXECUTE_IF("thread_id_overflow", global_thread_id= thread_id_max-2;);
 

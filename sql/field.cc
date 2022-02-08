@@ -26,7 +26,7 @@
 #ifdef USE_PRAGMA_IMPLEMENTATION
 #pragma implementation				// gcc: Class implementation
 #endif
-
+#include "clog.h"
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "sql_select.h"
@@ -1983,6 +1983,15 @@ void Field::make_send_field(Send_field *field)
   field->type=type();
   field->flags=table->maybe_null ? (flags & ~NOT_NULL_FLAG) : flags;
   field->decimals= 0;
+  CLOG_FUNCTIOND("Field::make_sned-field(Send_field *fiueld)");
+  CLOG_TPRINTLN("field->db_name=%s",field->db_name);
+  CLOG_TPRINTLN("field->org_table_name=%s",field->org_table_name);
+  CLOG_TPRINTLN("field->table_name=%s",field->table_name);
+  CLOG_TPRINTLN("field->org_col_name=%s",field->org_col_name);
+  CLOG_TPRINTLN("field->length=%d",field->length);
+  CLOG_TPRINTLN("field->type=%d",field->type);
+  CLOG_TPRINTLN("field->flags=%d",field->flags);
+  
 }
 
 
@@ -7558,6 +7567,8 @@ int Field_varstring::store(const char *from,size_t length,CHARSET_INFO *cs)
   uint copy_length;
   int rc;
 
+  CLOG_TPRINTLN("Field_varstirng::store");
+  CLOG_DISPBUFFER(from, length);
   rc= well_formed_copy_with_check((char*) get_data(), field_length,
                                   cs, from, length,
                                   field_length / field_charset->mbmaxlen,
@@ -8783,6 +8794,7 @@ enum extra2_gis_field_options {
 
 uint gis_field_options_image(uchar *buff, List<Create_field> &create_fields)
 {
+  CLOG_FUNCTIOND("uint gis_field_options_image(...)");
   uint image_size= 0;
   List_iterator<Create_field> it(create_fields);
   Create_field *field;
@@ -10598,7 +10610,7 @@ Field *make_field(TABLE_SHARE *share,
 {
   uchar *UNINIT_VAR(bit_ptr);
   uchar UNINIT_VAR(bit_offset);
-
+  CLOG_FUNCTIOND("Field *make_field(...)"); 
   DBUG_PRINT("debug", ("field_type: %s, field_length: %u, interval: %p, pack_flag: %s%s%s%s%s",
                        handler->name().ptr(), field_length, interval,
                        FLAGSTR(pack_flag, FIELDFLAG_BINARY),
@@ -10606,7 +10618,16 @@ Field *make_field(TABLE_SHARE *share,
                        FLAGSTR(pack_flag, FIELDFLAG_NUMBER),
                        FLAGSTR(pack_flag, FIELDFLAG_PACK),
                        FLAGSTR(pack_flag, FIELDFLAG_BLOB)));
+  CLOG_TPRINTLN("debug - field_type: %s, field_length: %u, interval: %p, pack_flag: %s%s%s%s%s",
+                       handler->name().ptr(), field_length, interval,
+                       FLAGSTR(pack_flag, FIELDFLAG_BINARY),
+                       FLAGSTR(pack_flag, FIELDFLAG_INTERVAL),
+                       FLAGSTR(pack_flag, FIELDFLAG_NUMBER),
+                       FLAGSTR(pack_flag, FIELDFLAG_PACK),
+                       FLAGSTR(pack_flag, FIELDFLAG_BLOB));
+  
 
+  CLOG_STEP("1","type_handler_row??");
   if (handler == &type_handler_row)
   {
     DBUG_ASSERT(field_length == 0);
@@ -10614,6 +10635,8 @@ Field *make_field(TABLE_SHARE *share,
     return new (mem_root) Field_row(ptr, field_name);
   }
 
+  CLOG_TPRINTLN("hander->real_field_type()(0x%08X)",handler->real_field_type());
+  CLOG_TPRINTLN("pack_flag(0x%08X)",pack_flag);
   if (handler->real_field_type() == MYSQL_TYPE_BIT && !f_bit_as_char(pack_flag))
   {
     bit_ptr= null_pos;

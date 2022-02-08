@@ -16,7 +16,6 @@
 
 
 /* Some general useful functions */
-
 #include "mariadb.h"                 /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include "table.h"
@@ -44,6 +43,8 @@
 #include "sql_cte.h"
 #include "ha_sequence.h"
 #include "sql_show.h"
+#include "clog.h"
+#include "trustsql_patch.h"
 
 /* For MySQL 5.7 virtual fields */
 #define MYSQL57_GENERATED_FIELD 128
@@ -382,13 +383,18 @@ void init_tmp_table_share(THD *thd, TABLE_SHARE *share, const char *key,
   DBUG_ENTER("init_tmp_table_share");
   DBUG_PRINT("enter", ("table: '%s'.'%s'", key, table_name));
 
+  CLOG_FUNCTIOND("void init_tmp_table_share(THD *thd, TABLE_SHARE *share, const char *key...");
+  CLOG_TPRINTLN("  Initialize share for temporary tables");
+  CLOG_STEP("1", "fill zero to share");
   bzero((char*) share, sizeof(*share));
   /*
     This can't be MY_THREAD_SPECIFIC for slaves as they are freed
     during cleanup() from Relay_log_info::close_temporary_tables()
   */
+  
   init_sql_alloc(&share->mem_root, "tmp_table_share", TABLE_ALLOC_BLOCK_SIZE,
                  0, MYF(thd->slave_thread ? 0 : MY_THREAD_SPECIFIC));
+  CLOG_STEP("2","Set share with parameters...");
   share->table_category=         TABLE_CATEGORY_TEMPORARY;
   share->tmp_table=              INTERNAL_TMP_TABLE;
   share->db.str=                 (char*) key;
@@ -403,6 +409,25 @@ void init_tmp_table_share(THD *thd, TABLE_SHARE *share, const char *key,
   share->frm_version= 		 FRM_VER_CURRENT;
   share->not_usable_by_query_cache= 1;
   share->can_do_row_logging= 0;           // No row logging
+
+  CLOG_TPRINTLN("share->table_category=		 TABLE_CATEGORY_TEMPORARY(0x%08X)",TABLE_CATEGORY_TEMPORARY);
+  CLOG_TPRINTLN("share->tmp_table= 			 INTERNAL_TMP_TABLE(0x%08X)",INTERNAL_TMP_TABLE);
+  CLOG_TPRINTLN("share->db.str=				 (char*) key(%s)",key);
+  CLOG_TPRINTLN("share->db.length= 	 strlen(key)(0x%08X)",(uint)strlen(key));
+
+  CLOG_TPRINTLN("share->table_cache_key.str=	 (char*) key(%s)",key);
+  CLOG_TPRINTLN("share->table_cache_key.length= key_length(0x%08X)",key_length);
+
+  CLOG_TPRINTLN("share->table_name.str=		 (char*) table_name(%s)",table_name);
+  CLOG_TPRINTLN("share->table_name.length= 	 strlen(table_name)(0x%08X)",(uint)strlen(table_name));
+
+  CLOG_TPRINTLN("share->path.str=				 (char*) path(%s)",path);
+  CLOG_TPRINTLN("share->normalized_path.str=	 (char*) path(%s)",path);
+  CLOG_TPRINTLN("share->path.length= share->normalized_path.length= strlen(path)(0x%08X)",share->path.length);
+
+  CLOG_TPRINTLN("share->frm_version=		 FRM_VER_CURRENT(0x%08X)",FRM_VER_CURRENT);
+  CLOG_TPRINTLN("share->not_usable_by_query_cache= 1");
+  CLOG_TPRINTLN("share->can_do_row_logging= 0");
 
   /*
     table_map_id is also used for MERGE tables to suppress repeated
@@ -582,14 +607,25 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
   char	path[FN_REFLEN];
   size_t frmlen, read_length;
   uint length;
+#ifdef TRUSTSQL_BUILD
+  uchar *tldgr_image;
+  uchar tldgr_head[TRUSTSQL_TLC_HEADER_SIZE];
+#endif
+
   DBUG_ENTER("open_table_def");
   DBUG_PRINT("enter", ("table: '%s'.'%s'  path: '%s'", share->db.str,
                        share->table_name.str, share->normalized_path.str));
+  CLOG_FUNCTIOND("enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)");
+  CLOG_TPRINTLN("Read table definition from a binary / text based .frm file");
+  CLOG_TPRINTLN("enter - table: '%s'.'%s'  path: '%s'", share->db.str,share->table_name.str, share->normalized_path.str);
 
   share->error= OPEN_FRM_OPEN_ERROR;
 
   length=(uint) (strxmov(path, share->normalized_path.str, reg_ext, NullS) -
                  path);
+  CLOG_TPRINTLN("path = %s",path);
+
+  CLOG_STEP("1","File OPEN");
   if (flags & GTS_FORCE_DISCOVERY)
   {
     DBUG_ASSERT(flags & GTS_TABLE);
@@ -597,8 +633,10 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
     mysql_file_delete_with_symlink(key_file_frm, path, "", MYF(0));
     file= -1;
   }
-  else
+  else {
+
     file= mysql_file_open(key_file_frm, path, O_RDONLY | O_SHARE, MYF(0));
+  	}
 
   if (file < 0)
   {
@@ -610,6 +648,7 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
     goto err_not_open;
   }
 
+  CLOG_STEP("2","File Read");
   if (mysql_file_read(file, head, sizeof(head), MYF(MY_NABP)))
   {
     share->error = my_errno == HA_ERR_FILE_TOO_SHORT
@@ -617,6 +656,7 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
     goto err;
   }
 
+  CLOG_STEP("3","View ?");
   if (memcmp(head, STRING_WITH_LEN("TYPE=VIEW\n")) == 0)
   {
     share->is_view= 1;
@@ -627,6 +667,7 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
         Create view file parser and hold it in TABLE_SHARE member
         view_def.
       */
+      CLOG_STEP("3-1","Create view file parser and hold it in TABLE_SHARE member veiw_def");
       share->view_def= sql_parse_prepare(&pathstr, &share->mem_root, true);
       if (!share->view_def)
         share->error= OPEN_FRM_ERROR_ALREADY_ISSUED;
@@ -637,12 +678,26 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
       share->error= OPEN_FRM_NOT_A_TABLE;
     goto err;
   }
+#ifdef TRUSTSQL_BUILD
+  if (!is_binary_frm_header(head))
+  {
+	  if (!is_binary_trusted_frm_header(head)) {
+	  	  /* No handling of text based files yet */
+		  share->error = OPEN_FRM_CORRUPTED;
+		  goto err;
+	  } else {
+		  share->trusted_table_type=1;
+	  }
+  }
+
+#else
   if (!is_binary_frm_header(head))
   {
     /* No handling of text based files yet */
     share->error = OPEN_FRM_CORRUPTED;
     goto err;
   }
+#endif
   if (!(flags & GTS_TABLE))
   {
     share->error = OPEN_FRM_NOT_A_VIEW;
@@ -651,14 +706,17 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
 
   frmlen= uint4korr(head+10);
   set_if_smaller(frmlen, FRM_MAX_SIZE); // safety
+  
+  CLOG_TPRINTLN(" FRM TOTAL LENGTH = 0x%08X(%d)",frmlen,frmlen);
 
   if (!(buf= (uchar*)my_malloc(frmlen, MYF(MY_THREAD_SPECIFIC|MY_WME))))
     goto err;
 
   memcpy(buf, head, sizeof(head));
-
+  CLOG_STEP("4","File read ~");
   read_length= mysql_file_read(file, buf + sizeof(head),
                                frmlen - sizeof(head), MYF(MY_WME));
+  CLOG_TPRINTLN("read length = 0x%08X(%d)",read_length,read_length);
   if (read_length == 0 || read_length == (size_t)-1)
   {
     share->error = OPEN_FRM_READ_ERROR;
@@ -669,9 +727,58 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
 
   frmlen= read_length + sizeof(head);
 
+
+  CLOG_STEP("5","init from binary frm image ~~ ");
   share->init_from_binary_frm_image(thd, false, buf, frmlen);
   error_given= true; // init_from_binary_frm_image has already called my_error()
   my_free(buf);
+
+#ifdef TRUSTSQL_BUILD
+  if (share->trusted_table_type!=0) {
+	  CLOG_STEP("6","init from trust binary frm image ~~ ");
+
+	  length=(uint) (strxmov(path, share->normalized_path.str, TRUSTSQL_CNF_FILE_EXT, NullS) -
+	                  path);
+	  CLOG_TPRINTLN("full tldgr name = %s",path);
+
+	  file= mysql_file_open(key_file_frm, path, O_RDONLY | O_SHARE, MYF(0));
+	  if (file < 0)
+	  {
+		  if ((flags & GTS_TABLE) && (flags & GTS_USE_DISCOVERY))
+		  {
+			ha_discover_table(thd, share);
+			error_given= true;
+		  }
+		  goto err_not_open;
+	  }
+
+	  CLOG_STEP("2","File Read");
+	  if (mysql_file_read(file, tldgr_head, sizeof(tldgr_head), MYF(MY_NABP)))
+	  {
+		  share->error = my_errno == HA_ERR_FILE_TOO_SHORT
+							? OPEN_FRM_CORRUPTED : OPEN_FRM_READ_ERROR;
+		  goto err;
+	  }
+
+	  frmlen= TRUSTSQL_TLC_HEADER_SIZE+uint2korr(tldgr_head+(TRUSTSQL_TLC_HEADER_SIZE-2));
+	  CLOG_TPRINTLN("tldgr frmlen = %d",frmlen);
+
+	  if (!(tldgr_image= (uchar*)my_malloc(frmlen, MYF(MY_THREAD_SPECIFIC|MY_WME))))
+		  goto err;
+
+	  memcpy(tldgr_image, tldgr_head, sizeof(tldgr_head));
+	  CLOG_STEP("4","File read ~");
+	  read_length= mysql_file_read(file, tldgr_image + sizeof(tldgr_head),
+			  frmlen - sizeof(tldgr_head), MYF(MY_WME));
+	  CLOG_TPRINTLN("read length = 0x%08X(%d)",read_length,read_length);
+
+	  mysql_file_close(file, MYF(MY_WME));
+
+	  if (init_share_from_tld_image(thd, share, tldgr_image,frmlen))
+	      goto err;
+	  my_free(tldgr_image);
+  }
+#endif
 
   goto err_not_open;
 
@@ -699,6 +806,7 @@ static bool create_key_infos(const uchar *strpos, const uchar *frm_image_end,
   ulong *rec_per_key= NULL;
   KEY_PART_INFO *first_key_part= NULL;
   uint first_key_parts= 0;
+  CLOG_FUNCTIOND("static bool create_key_infos(const uchar *strpos, const uchar *frm_image_end,...)");
 
   if (!keys)
   {  
@@ -1207,18 +1315,40 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   MEM_ROOT *old_root= thd->mem_root;
   Virtual_column_info **table_check_constraints;
   DBUG_ENTER("TABLE_SHARE::init_from_binary_frm_image");
+  CLOG_TPRINTLN("======================================================================");
+  CLOG_FUNCTIOND("int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,...");
+  CLOG_TPRINTLN("Read data from a binary .frm file image into a TABLE_SHARE");
+
+  CLOG_TPRINTLN("P2: write(0x%08X)",write);
+  CLOG_TPRINTLN("TABLE NAME=%s   PATH=%s",share->table_name.str,share->path.str);
+  CLOG_TPRINTLN("======================================================================");
+  CLOG_TPRINTLN("P3: frm image:");
+  //ZLOG_DISPBUFFER(frm_image,frm_length);
 
   keyinfo= &first_keyinfo;
   share->ext_key_parts= 0;
   thd->mem_root= &share->mem_root;
 
+  CLOG_STEP("1","write_frm_image()");
+#ifdef TRUSTSQL_BUILD123
+  if(frm_image[59]=='T') {
+	  CLOG_TPRINTLN("Original Firm Len=%d",frm_length);
+  	  CLOG_TPRINTLN("Trusted Firm Len=%d",frm_length + TRUSTSQL_TLC_HEADER_SIZE + uint2korr(frm_image+frm_length+TRUSTSQL_TLC_HEADER_SIZE));
+  	  if (write && write_frm_image(frm_image, frm_length + TRUSTSQL_TLC_HEADER_SIZE + uint2korr(frm_image+frm_length+TRUSTSQL_TLC_HEADER_SIZE)))
+  		  goto err;
+  } else {
+	  if (write && write_frm_image(frm_image, frm_length))
+	      goto err;
+  }
+#else
   if (write && write_frm_image(frm_image, frm_length))
     goto err;
-
+#endif
   if (frm_length < FRM_HEADER_SIZE + FRM_FORMINFO_SIZE)
     goto err;
 
   share->frm_version= frm_image[2];
+  CLOG_TPRINTLN("@share->frm_version = 0x%08X",share->frm_version);
   /*
     Check if .frm file created by MySQL 5.0. In this case we want to
     display CHAR fields as CHAR and not as VARCHAR.
@@ -1231,10 +1361,14 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   new_field_pack_flag= frm_image[27];
   new_frm_ver= (frm_image[2] - FRM_VER);
   field_pack_length= new_frm_ver < 2 ? 11 : 17;
+  CLOG_TPRINTLN("@field_pack_length=0x%08X",field_pack_length);
 
   /* Length of the MariaDB extra2 segment in the form file. */
   len = uint2korr(frm_image+4);
   extra2= frm_image + 64;
+  CLOG_TPRINTLN("@extra2 sement length=0x%08X  extra2 = %d(0x%08X)",len,field_pack_length,field_pack_length);
+  
+  CLOG_STEP("1","check extra2 from segment EXTRA2_TABLEDEF_VERSION, EXTRA2_DEFAULT_PART_ENGINE,EXTRA2_GIS,EXTRA2_PERIOD_FOR_SYSTEM_TIME");
 
   if (*extra2 != '/')   // old frm had '/' there
   {
@@ -1337,6 +1471,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   }
 #endif
   legacy_db_type= (enum legacy_db_type) (uint) frm_image[3];
+  CLOG_TPRINTLN("legacy_db_type = %d",legacy_db_type);
   /*
     if the storage engine is dynamic, no point in resolving it by its
     dynamically allocated legacy_db_type. We will resolve it later by name.
@@ -1396,9 +1531,11 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   share->db_record_offset= 1;
   share->max_rows= uint4korr(frm_image+18);
   share->min_rows= uint4korr(frm_image+22);
-
+  CLOG_TPRINTLN("@share->max_rows = 0x%08X",share->max_rows); 
+  CLOG_TPRINTLN("@share->min_rows = 0x%08X",share->min_rows);   
   /* Read keyinformation */
   disk_buff= frm_image + uint2korr(frm_image+6);
+  CLOG_TPRINTLN("@Position to key information = 0x%08X",disk_buff);	
 
   if (disk_buff + 6 >= frm_image_end)
     goto err;
@@ -1413,6 +1550,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
     keys=      disk_buff[0];
     share->key_parts= key_parts= disk_buff[1];
   }
+  CLOG_TPRINTLN("@key no = 0x%08X",keys);
   share->keys_for_keyread.init(0);
   share->keys_in_use.init(keys);
   ext_key_parts= key_parts;
@@ -1421,23 +1559,29 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
 
   share->reclength = uint2korr(frm_image+16);
   share->stored_rec_length= share->reclength;
+  CLOG_TPRINTLN("@share->reclength = 0x%08X",share->reclength);   
   if (frm_image[26] == 1)
     share->system= 1;				/* one-record-database */
 
   record_offset= (ulong) (uint2korr(frm_image+6)+
                           ((uint2korr(frm_image+14) == 0xffff ?
                             uint4korr(frm_image+47) : uint2korr(frm_image+14))));
-
+  CLOG_TPRINTLN("@record_offset = 0x%08X",record_offset);
   if (record_offset + share->reclength >= frm_length)
     goto err;
+  CLOG_TPRINTLN("@record_offset(0x%8X) share->reclngth(0x%08X) frm_length(0x%08X)",record_offset,share->reclength,frm_length);
  
   if ((n_length= uint4korr(frm_image+55)))
   {
     /* Read extra data segment */
+	CLOG_TPRINTLN("@n_length = 0x%08X",n_length);
     const uchar *next_chunk, *buff_end;
     DBUG_PRINT("info", ("extra segment size is %u bytes", n_length));
-    next_chunk= frm_image + record_offset + share->reclength;
+	CLOG_TPRINTLN("info - extra segment size is %u bytes", n_length); 
+	
+    next_chunk= frm_image + record_offset + share->reclength;	
     buff_end= next_chunk + n_length;
+	CLOG_TPRINTLN("next_chunk=0x%08X, buff_end=0x%08X",next_chunk, buff_end);
 
     if (buff_end >= frm_image_end)
       goto err;
@@ -1450,6 +1594,8 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
     {
       goto err;
     }
+    CLOG_TPRINTLN("@share->connect_string = %s",share->connect_string);
+	
     next_chunk+= share->connect_string.length + 2;
     if (next_chunk + 2 < buff_end)
     {
@@ -1457,6 +1603,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
       LEX_CSTRING name;
       name.str= (char*) next_chunk + 2;
       name.length= str_db_type_length;
+      CLOG_TPRINTLN("str_db_type  = %s",name.str);
 
       plugin_ref tmp_plugin= ha_resolve_by_name(thd, &name, false);
       if (tmp_plugin != NULL && !plugin_equals(tmp_plugin, se_plugin))
@@ -1510,7 +1657,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
     }
 
     share->set_use_ext_keys_flag(plugin_hton(se_plugin)->flags & HTON_SUPPORTS_EXTENDED_KEYS);
-
+    CLOG_TPRINTLN("Call Create Key Info");
     if (create_key_infos(disk_buff + 6, frm_image_end, keys, keyinfo,
                          new_frm_ver, ext_key_parts,
                          share, len, &first_keyinfo, keynames))
@@ -1626,10 +1773,13 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
 
   disk_buff= frm_image + pos + FRM_FORMINFO_SIZE;
   share->fields= uint2korr(forminfo+258);
+  CLOG_TPRINTLN("@share->fields = 0x%08X",share->fields);
+  
   if (extra2_field_flags && extra2_field_flags_length != share->fields)
     goto err;
   pos= uint2korr(forminfo+260);   /* Length of all screens */
   n_length= uint2korr(forminfo+268);
+  CLOG_TPRINTLN("n_length = 0x%08X",n_length);  
   interval_count= uint2korr(forminfo+270);
   interval_parts= uint2korr(forminfo+272);
   int_length= uint2korr(forminfo+274);
@@ -1648,18 +1798,46 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   }
 
   DBUG_PRINT("info",("i_count: %d  i_parts: %d  index: %d  n_length: %d  int_length: %d  com_length: %d  vcol_screen_length: %d", interval_count,interval_parts, keys,n_length,int_length, com_length, vcol_screen_length));
+  CLOG_TPRINTLN("info - i_count: %d  i_parts: %d  index: %d  n_length: %d  int_length: %d  com_length: %d  vcol_screen_length: %d", interval_count,interval_parts, keys,n_length,int_length, com_length, vcol_screen_length);
 
+  CLOG_TPRINTLN("!!! multi_alloc_root !!!");
+#ifdef TRUSTSQL_BUILD1
+  if(frm_image[59]=='T') {
+	  if (!multi_alloc_root(&share->mem_root,
+							&share->field, (uint)(share->fields+1)*sizeof(Field*),
+							&share->intervals, (uint)interval_count*sizeof(TYPELIB),
+							&share->check_constraints, (uint) share->table_check_constraints * sizeof(Virtual_column_info*),
+							&interval_array, (uint) (share->fields+interval_parts+ keys+3)*sizeof(char *),
+							&names, (uint) (n_length+int_length),
+							&comment_pos, (uint) com_length,
+							&vcol_screen_pos, vcol_screen_length,
+							&share->trusted_sign,(uint)sizeof(Trusted_Sign),
+							NullS))
+		goto err;
+  } else {
+	  if (!multi_alloc_root(&share->mem_root,
+	  							&share->field, (uint)(share->fields+1)*sizeof(Field*),
+	  							&share->intervals, (uint)interval_count*sizeof(TYPELIB),
+	  							&share->check_constraints, (uint) share->table_check_constraints * sizeof(Virtual_column_info*),
+	  							&interval_array, (uint) (share->fields+interval_parts+ keys+3)*sizeof(char *),
+	  							&names, (uint) (n_length+int_length),
+	  							&comment_pos, (uint) com_length,
+	  							&vcol_screen_pos, vcol_screen_length,
+	  							NullS))
+		goto err;
+  }
+#else
   if (!multi_alloc_root(&share->mem_root,
-                        &share->field, (uint)(share->fields+1)*sizeof(Field*),
-                        &share->intervals, (uint)interval_count*sizeof(TYPELIB),
-                        &share->check_constraints, (uint) share->table_check_constraints * sizeof(Virtual_column_info*),
-                        &interval_array, (uint) (share->fields+interval_parts+ keys+3)*sizeof(char *),
-                        &names, (uint) (n_length+int_length),
-                        &comment_pos, (uint) com_length,
-                        &vcol_screen_pos, vcol_screen_length,
-                        NullS))
-
-    goto err;
+                          &share->field, (uint)(share->fields+1)*sizeof(Field*),
+                          &share->intervals, (uint)interval_count*sizeof(TYPELIB),
+                          &share->check_constraints, (uint) share->table_check_constraints * sizeof(Virtual_column_info*),
+                          &interval_array, (uint) (share->fields+interval_parts+ keys+3)*sizeof(char *),
+                          &names, (uint) (n_length+int_length),
+                          &comment_pos, (uint) com_length,
+                          &vcol_screen_pos, vcol_screen_length,
+  				          NullS))
+      goto err;
+#endif
 
   field_ptr= share->field;
   table_check_constraints= share->check_constraints;
@@ -1680,6 +1858,8 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   memcpy(vcol_screen_pos, disk_buff+read_length-vcol_screen_length, 
          vcol_screen_length);
 
+  CLOG_TPRINTLN("name = %s",names);
+  CLOG_DISPBUFFER(names,n_length+int_length);
   fix_type_pointers(&interval_array, &share->fieldnames, 1, &names);
   if (share->fieldnames.count != share->fields)
     goto err;
@@ -2657,6 +2837,33 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
     (void) my_hash_check(&share->name_hash);
 #endif
 
+#ifdef TRUSTSQL_BUILD123
+  if(frm_image[59]=='T') {
+	  if (init_tldg_from_full_binary_frm_image(share,frm_image))
+		  goto err;
+
+	  CLOG_TPRINTLN("share->TRUSTED_TABLE_FLAG=%d",share->TRUSTED_TABLE_FLAG);
+	  CLOG_TPRINTLN("share->tldg_sig_no=%d",share->tldg_sig_no);
+	  st_tldg_sig_info *siginfo;
+	  LEX_CSTRING *ifname;
+	  siginfo = share->siginfo;
+	  for(int i=0; i<share->tldg_sig_no; i++,siginfo++) {
+		  CLOG_TPRINTLN("sig field name = %s",siginfo->sig_name.str);
+		  CLOG_TPRINTLN("input field no = %d",siginfo->input_no);
+		  ifname = siginfo->input_field_name;
+		  for(int j=0; j<siginfo->input_no; ifname++,j++) {
+			  CLOG_TPRINTLN(" input field (%d)  name = %s",j,ifname->str);
+		  }
+	  }
+
+  } else {
+	  share->TRUSTED_TABLE_FLAG=false;
+  }
+
+
+
+#endif
+
   share->db_plugin= se_plugin;
   delete handler_file;
 
@@ -2680,6 +2887,59 @@ err:
   DBUG_RETURN(HA_ERR_NOT_A_TABLE);
 }
 
+
+
+
+
+#ifdef TRUSTSQL_BUILD
+/**
+  Read data from a binary .frm file image into a TABLE_SHARE
+
+  @note
+  frm bytes at the following offsets are unused in MariaDB 10.0:
+
+  8..9    (used to be the number of "form names")
+  28..29  (used to be key_info_length)
+
+  They're still set, for compatibility reasons, but never read.
+
+  42..46 are unused since 5.0 (were for RAID support)
+  Also, there're few unused bytes in forminfo.
+
+*/
+
+int TABLE_SHARE::init_from_trusted_binary_frm_image(THD *thd, bool write,
+                                            const uchar *frm_image, size_t frm_length,
+											const uchar *tld_image, size_t tld_length)
+{
+  TABLE_SHARE *share= this;
+  Table_trust_options trust_options;
+  DBUG_ENTER("TABLE_SHARE::init_from_trusted_binary_frm_image");
+  CLOG_FUNCTIOND("int TABLE_SHARE::init_from_trusted_binary_frm_image(...)");
+  if (share->init_from_binary_frm_image(thd, write,frm_image,frm_length))
+        goto err;
+
+  if (write && tldgr_add_const4t_table(thd, (char*)tld_image, tld_length, normalized_path.str, db.str, table_name.str))
+      goto err;
+
+ // tlc 파일로 부터 Trsuted_Sign 관련 정보를 읽어 TABLE_SHARE에 넣는 함수를 호출해야 한다. 호출해서 하자.
+  if (init_share_from_tld_image(thd, share, tld_image,tld_length))
+          goto err;
+
+  DBUG_RETURN(0);
+  // ERROR부분은 다시 정리하여 수정하자.
+err:
+    share->db_plugin= NULL;
+    share->error= OPEN_FRM_CORRUPTED;
+    share->open_errno= my_errno;
+    my_hash_free(&share->name_hash);
+    if (!thd->is_error())
+      open_table_error(share, OPEN_FRM_CORRUPTED, share->open_errno);
+
+    DBUG_RETURN(HA_ERR_NOT_A_TABLE);
+}
+
+#endif
 
 static bool sql_unusable_for_discovery(THD *thd, handlerton *engine,
                                        const char *sql)
@@ -3133,6 +3393,10 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
   DBUG_ENTER("open_table_from_share");
   DBUG_PRINT("enter",("name: '%s.%s'  form: %p", share->db.str,
                       share->table_name.str, outparam));
+  CLOG_TPRINTLN("--------------------------------------------------------------------------------");
+  CLOG_FUNCTIOND("enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,...");
+  CLOG_TPRINTLN("Open a table based on a TABLE_SHARE");
+  CLOG_TPRINTLN("--------------------------------------------------------------------------------");
 
   thd->lex->context_analysis_only&= ~CONTEXT_ANALYSIS_ONLY_VIEW; // not a view
 
@@ -3150,6 +3414,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
     error= OPEN_FRM_NEEDS_REBUILD;
     goto err;
   }
+  CLOG_STEP("1","init_sql_alloc - outparam->memroot!!");
   init_sql_alloc(&outparam->mem_root, "table", TABLE_ALLOC_BLOCK_SIZE, 0,
                  MYF(0));
 
@@ -3157,6 +3422,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
     We have to store the original alias in mem_root as constraints and virtual
     functions may store pointers to it
   */
+  CLOG_STEP("2","set ourparam(table) with basic values");
   if (!(tmp_alias= strmake_root(&outparam->mem_root, alias->str, alias->length)))
     goto err;
 
@@ -3242,6 +3508,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
                                     share->null_bytes);
 
   /* Setup copy of fields from share, but use the right alias and record */
+  CLOG_STEP("3","Setup copy of fields from share, but use the right alias and record");
   for (i=0 ; i < share->fields; i++, field_ptr++)
   {
     if (!((*field_ptr)= share->field[i]->clone(&outparam->mem_root, outparam)))
@@ -3258,6 +3525,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
       outparam->field[(uint) (share->found_next_number_field - share->field)];
 
   /* Fix key->name and key_part->field */
+  CLOG_STEP("4","Fix key->name and key_part->field");
   if (share->key_parts)
   {
     KEY	*key_info, *key_info_end;
@@ -3308,6 +3576,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
   /*
     Process virtual and default columns, if any.
   */
+  CLOG_STEP("5","Process virtual and default columns, if any.");
   if (share->virtual_fields || share->default_fields ||
       share->default_expressions || share->table_check_constraints)
   {
@@ -3346,6 +3615,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
 
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   bool work_part_info_used;
+  CLOG_STEP("6","WITH_PARTITION_STORAGE_ENGINE");
   if (share->partition_info_str_len && outparam->file)
   {
   /*
@@ -3412,6 +3682,7 @@ partititon_err:
 #endif
 
   /* Check virtual columns against table's storage engine. */
+  CLOG_STEP("7","Check virtual columns against table's storage engine.");
   if (share->virtual_fields &&
         (outparam->file && 
           !(outparam->file->ha_table_flags() & HA_CAN_VIRTUAL_COLUMNS)))
@@ -3423,7 +3694,7 @@ partititon_err:
   }
 
   /* Allocate bitmaps */
-
+  CLOG_STEP("7","Allocate bitmaps");
   bitmap_size= share->column_bitmap_size;
   bitmap_count= 7;
   if (share->virtual_fields)
@@ -3441,6 +3712,7 @@ partititon_err:
   bitmaps+= bitmap_size;
 
   /* Don't allocate vcol_bitmap if we don't need it */
+  CLOG_STEP("8","Don't allocate vcol_bitmap if we don't need it");
   if (share->virtual_fields)
   {
     if (!(outparam->def_vcol_set= (MY_BITMAP*)
@@ -3470,6 +3742,7 @@ partititon_err:
   outparam->cond_selectivity= 1.0;
 
   /* The table struct is now initialized;  Open the table */
+  CLOG_STEP("9","The table struct is now initialized;  Open the table");
   if (db_stat)
   {
     if (specialflag & SPECIAL_WAIT_IF_LOCKED)
@@ -3537,8 +3810,10 @@ partititon_err:
     share->can_do_row_logging= 0;   // No row based replication
 
   /* Increment the opened_tables counter, only when open flags set. */
+  CLOG_STEP("10","Increment the opened_tables counter, only when open flags set.");
   if (db_stat)
     thd->status_var.opened_tables++;
+  CLOG_TPRINTLN("thd->status_var.opened_tables = %d",thd->status_var.opened_tables);
 
   thd->lex->context_analysis_only= save_context_analysis_only;
   DBUG_RETURN (OPEN_FRM_OK);
@@ -3718,6 +3993,8 @@ fix_type_pointers(const char ***array, TYPELIB *point_to_type, uint types,
 {
   char *type_name, *ptr;
   char chr;
+  CLOG_FUNCTIOND("fix_type_pointers(const char ***array, TYPELIB *point_to_type, uint types, char **names)");
+  CLOG_TPRINTLN("fix a str_type to a array type");
 
   ptr= *names;
   while (types--)
@@ -3837,6 +4114,7 @@ void prepare_frm_header(THD *thd, uint reclength, uchar *fileinfo,
   size_t key_comment_total_bytes= 0;
   uint i;
   DBUG_ENTER("prepare_frm_header");
+  CLOG_FUNCTIOND("void prepare_frm_header(...)");
 
   /* Fix this when we have new .frm files;  Current limit is 4G rows (TODO) */
   if (create_info->max_rows > UINT_MAX32)
@@ -3844,17 +4122,23 @@ void prepare_frm_header(THD *thd, uint reclength, uchar *fileinfo,
   if (create_info->min_rows > UINT_MAX32)
     create_info->min_rows= UINT_MAX32;
 
+  CLOG_STEP("1","HEADER");
   size_t key_length, tmp_key_length, tmp, csid;
   bzero((char*) fileinfo, FRM_HEADER_SIZE);
+  CLOG_TPRINTLN("FRM_HEADER_SIZE=%d",FRM_HEADER_SIZE);
+  CLOG_DISPBUFFER(fileinfo,FRM_HEADER_SIZE);
   /* header */
   fileinfo[0]=(uchar) 254;
   fileinfo[1]= 1;
   fileinfo[2]= (create_info->expression_length == 0 ? FRM_VER_TRUE_VARCHAR :
                 FRM_VER_EXPRESSSIONS);
+  CLOG_TPRINTLN("fileinfo[0](0x%08X)=(uchar)254)",fileinfo[0]);
+  CLOG_TPRINTLN("fileinfo[1](0x%08X)=1",fileinfo[1]);
+  CLOG_TPRINTLN("fileinfo[2](0x%08X)=(create_info->expression_length(0x%8X) == 0 ? FRM_VER_TRUE_VARCHAR : FRM_VER_EXPRESSSIONS)",fileinfo[2],create_info->expression_length);
 
   DBUG_ASSERT(ha_storage_engine_is_enabled(create_info->db_type));
   fileinfo[3]= (uchar) ha_legacy_type(create_info->db_type);
-
+  CLOG_TPRINTLN("fileinfo[3](0x%08X)=(uchar) ha_legacy_type(create_info->db_type);",fileinfo[3]);
   /*
     Keep in sync with pack_keys() in unireg.cc
     For each key:
@@ -3867,53 +4151,101 @@ void prepare_frm_header(THD *thd, uint reclength, uchar *fileinfo,
     1 byte for the NAMES_SEP_CHAR (after the last name)
     9 extra bytes (padding for safety? alignment?)
   */
+  CLOG_STEP("2","Keep in sync with pack_keys() in unireg.cc");
   for (i= 0; i < keys; i++)
   {
     DBUG_ASSERT(MY_TEST(key_info[i].flags & HA_USES_COMMENT) ==
                 (key_info[i].comment.length > 0));
-    if (key_info[i].flags & HA_USES_COMMENT)
+    if (key_info[i].flags & HA_USES_COMMENT) {
       key_comment_total_bytes += 2 + key_info[i].comment.length;
+      CLOG_TPRINTLN("key_comment_total_bytes(0x%08X) += 2 + key_info[%d].comment.length(0x%08X)",key_comment_total_bytes,i,key_info[i].comment.length);
+      }
   }
 
   key_length= keys * (8 + MAX_REF_PARTS * 9 + NAME_LEN + 1) + 16
               + key_comment_total_bytes;
+  CLOG_TPRINTLN("key_length(0x%08X)= keys(0x%08X) * (8 + MAX_REF_PARTS(0x%08X) * 9 + NAME_LEN(0x%08X) + 1) + 16 + key_comment_total_bytes(0x%08X)",
+  					key_length,keys,MAX_REF_PARTS,NAME_LEN,key_comment_total_bytes);
+  
 
   int2store(fileinfo+8,1);
+  CLOG_TPRINTLN("fileinfo[8](int2))=1");
   tmp_key_length= (key_length < 0xffff) ? key_length : 0xffff;
   int2store(fileinfo+14,tmp_key_length);
+  CLOG_TPRINTLN("fileinfo[14](int2))=tmp_key_length(0x%08X)",tmp_key_length);
   int2store(fileinfo+16,reclength);
+  CLOG_TPRINTLN("fileinfo[16](int2))=reclength(0x%08X)",reclength);
   int4store(fileinfo+18,create_info->max_rows);
+  CLOG_TPRINTLN("fileinfo[18](int4))=create_info->max_rows(0x%08X)",create_info->max_rows);
   int4store(fileinfo+22,create_info->min_rows);
+  CLOG_TPRINTLN("fileinfo[22](int4))=create_info->min_rows(0x%08X)",create_info->min_rows);
   /* fileinfo[26] is set in mysql_create_frm() */
+  CLOG_TPRINTLN("fileinfo[26] is set in mysql_create_frm()");
   fileinfo[27]=2;				// Use long pack-fields
+  CLOG_TPRINTLN("fileinfo[27]=2");
   /* fileinfo[28 & 29] is set to key_info_length in mysql_create_frm() */
+  CLOG_TPRINTLN("fileinfo[28 & 29] is set to key_info_length in mysql_create_frm()");
   create_info->table_options|=HA_OPTION_LONG_BLOB_PTR; // Use portable blob pointers
   int2store(fileinfo+30,create_info->table_options);
+  CLOG_TPRINTLN("fileinfo[30](int2)(0x%08X)=create_info->table_options",create_info->table_options);
+  
   fileinfo[32]=0;				// No filename anymore
+  CLOG_TPRINTLN("fileinfo[32]=0");
   fileinfo[33]=5;                             // Mark for 5.0 frm file
+  CLOG_TPRINTLN("fileinfo[33]=5");
   int4store(fileinfo+34,create_info->avg_row_length);
+  CLOG_TPRINTLN("fileinfo[34](int4)=create_info->avg_row_length",create_info->avg_row_length);
   csid= (create_info->default_table_charset ?
          create_info->default_table_charset->number : 0);
   fileinfo[38]= (uchar) csid;
+  CLOG_TPRINTLN("fileinfo[38]=(uchar) csid(0x%08X)",csid);
   fileinfo[39]= (uchar) ((uint) create_info->transactional |
                          ((uint) create_info->page_checksum << 2) |
                          ((create_info->sequence ? HA_CHOICE_YES : 0) << 4));
+  CLOG_TPRINTLN("fileinfo[39]=(uchar) .....(0x%08X)",fileinfo[39]);
+
   fileinfo[40]= (uchar) create_info->row_type;
+  CLOG_TPRINTLN("fileinfo[40]=(uchar) create_info->row_type(0x%08X)",create_info->row_type);
   /* Bytes 41-46 were for RAID support; now reused for other purposes */
+  CLOG_TPRINTLN("Bytes 41-46 were for RAID support; now reused for other purposes");
   fileinfo[41]= (uchar) (csid >> 8);
+  CLOG_TPRINTLN("fileinfo[41]=(uchar) (csid >> 8)(0x%08X)",(csid >> 8));
+
   int2store(fileinfo+42, create_info->stats_sample_pages & 0xffff);
+  CLOG_TPRINTLN("fileinfo[42](int2)=create_info->stats_sample_pages(0x%08X) & 0xffff",create_info->stats_sample_pages);
+  
   fileinfo[44]= (uchar)  create_info->stats_auto_recalc;
+  CLOG_TPRINTLN("fileinfo[44]=(uchar)  create_info->stats_auto_recalc(0x%08X)",create_info->stats_auto_recalc);
+  
   int2store(fileinfo+45, (create_info->check_constraint_list->elements+
                           create_info->field_check_constraints));
+  CLOG_TPRINTLN("fileinfo[45](int2)=create_info->check_constraint_list->elements(0x%08X)+create_info->field_check_constraints(0x%08X)",create_info->check_constraint_list->elements,create_info->field_check_constraints);
+  
   int4store(fileinfo+47, key_length);
+  CLOG_TPRINTLN("fileinfo[47]=key_length(0x%08X)",key_length);
+  
   tmp= MYSQL_VERSION_ID;          // Store to avoid warning from int4store
   int4store(fileinfo+51, tmp);
+  CLOG_TPRINTLN("fileinfo[51](int4)=MYSQL_VERSION_ID(0x%08X)",tmp);
   int4store(fileinfo+55, create_info->extra_size);
+  CLOG_TPRINTLN("fileinfo[55](int4)=create_info->extra_size(0x%08X)",create_info->extra_size);
   /*
     59-60 is unused since 10.2.4
     61 for default_part_db_type
   */
+#ifdef TRUSTSQL_BUILD
+  if(thd->lex->create_info.is_Trusted()) {
+	  CLOG_TPRINTLN("!!!!!!!!!!!!!! THIS IS A TRUSTED TABLE , Set FRM[TRUSTSQL_FLAG_OFFSET]=='T'");
+	  CLOG_TPRINTLN("!!!!!!!!!!!!!! Please Note it works when it is called CREATE!");
+	  fileinfo[TRUSTSQL_FLAG_OFFSET]= 'T';
+  }
+#endif
+
+  CLOG_TPRINTLN("59-60 is unused since 10.2.4");
+  CLOG_TPRINTLN("    61 for default_part_db_type");
   int2store(fileinfo+62, create_info->key_block_size);
+  CLOG_TPRINTLN("fileinfo[62](int2)=create_info->key_block_size(0x%08X)",create_info->key_block_size);  
+  CLOG_DISPBUFFER(fileinfo,FRM_HEADER_SIZE);
   DBUG_VOID_RETURN;
 } /* prepare_fileinfo */
 
@@ -3922,6 +4254,7 @@ void update_create_info_from_table(HA_CREATE_INFO *create_info, TABLE *table)
 {
   TABLE_SHARE *share= table->s;
   DBUG_ENTER("update_create_info_from_table");
+  CLOG_FUNCTIOND("void update_create_info_from_table(HA_CREATE_INFO *create_info, TABLE *table)");
 
   create_info->max_rows= share->max_rows;
   create_info->min_rows= share->min_rows;
@@ -4157,6 +4490,7 @@ bool check_column_name(const char *name)
   // name length in symbols
   size_t name_length= 0;
   bool last_char_is_space= TRUE;
+  CLOG_FUNCTIOND("bool check_column_name(const char *name)");
 
   while (*name)
   {
@@ -4601,6 +4935,8 @@ bool TABLE_SHARE::wait_for_old_version(THD *thd, struct timespec *abstime,
 void TABLE::init(THD *thd, TABLE_LIST *tl)
 {
   DBUG_ASSERT(s->tmp_table != NO_TMP_TABLE || s->tdc->ref_count > 0);
+  CLOG_FUNCTIOND("void TABLE::init(THD *thd, TABLE_LIST *tl)");
+  CLOG_TPRINTLN("Initialize TABLE instance and prepare it for further use during statement execution.");  
 
   if (thd->lex->need_correct_ident())
     alias_name_used= my_strcasecmp(table_alias_charset,
@@ -8035,6 +8371,7 @@ bool TABLE::prepare_triggers_for_update_stmt_or_event()
 bool TABLE::validate_default_values_of_unset_fields(THD *thd) const
 {
   DBUG_ENTER("TABLE::validate_default_values_of_unset_fields");
+  CLOG_TPRINTLN("bool TABLE::validate_default_values_of_unset_fields(THD *thd) const");
   for (Field **fld= field; *fld; fld++)
   {
     if (!bitmap_is_set(write_set, (*fld)->field_index) &&

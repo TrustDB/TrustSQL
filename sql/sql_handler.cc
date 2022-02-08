@@ -61,6 +61,7 @@
 #include "sql_base.h"                           // insert_fields
 #include "sql_select.h"
 #include "transaction.h"
+#include "clog.h"
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
 #pragma implementation				// gcc: Class implementation
@@ -196,6 +197,9 @@ static void mysql_ha_close_childs(THD *thd, TABLE_LIST *current_table_list,
 static void mysql_ha_close_table(SQL_HANDLER *handler)
 {
   DBUG_ENTER("mysql_ha_close_table");
+  CLOG_FUNCTIOND("l_ha_close_table(SQL_HANDLER *handler)");
+  CLOG_TPRINTLN("Close a HANDLER table.");
+  
   THD *thd= handler->thd;
   TABLE *table= handler->table;
   TABLE_LIST *current_table_list= NULL, *next_global;
@@ -1163,6 +1167,8 @@ void mysql_ha_flush(THD *thd)
 {
   SQL_HANDLER *hash_tables;
   DBUG_ENTER("mysql_ha_flush");
+  CLOG_FUNCTIOND("void mysql_ha_flush(THD *thd)");  
+  CLOG_TPRINTLN("Flush (close and mark for re-open) all tables that should be should be reopen.");	
 
   /*
     Don't try to flush open HANDLERs when we're working with

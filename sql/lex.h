@@ -19,8 +19,8 @@
 
 
 /* This file includes all reserved words and functions */
-
 #include "lex_symbol.h"
+#include "clog.h"
 
 SYM_GROUP sym_group_common= {"", ""};
 SYM_GROUP sym_group_geom= {"Spatial extentions", "HAVE_SPATIAL"};
@@ -722,7 +722,20 @@ static SYMBOL symbols[] = {
   { "YEAR",		SYM(YEAR_SYM)},
   { "YEAR_MONTH",	SYM(YEAR_MONTH_SYM)},
   { "ZEROFILL",		SYM(ZEROFILL)},
-  { "||",		SYM(OR2_SYM)}
+  { "||",		SYM(OR2_SYM)},
+#ifdef TRUSTSQL_BUILD
+
+  /* Trusted Ledger */
+  { "TRUSTED", 	  SYM(TRUSTED_SYM)}, 
+  { "SIGNATURE", 	  SYM(SIGNATURE_SYM)},
+  { "DSA_ALGORITHM", 	  SYM(DSA_ALGORITHM_SYM)},
+  { "INPUTS", 	  SYM(INPUTS_SYM)}, 
+  { "ORDERED", 	  SYM(ORDERED_SYM)},
+  { "TIMED",      SYM(TIMED_SYM)},
+  { "VERIFY", 	  SYM(VERIFY_SYM)},
+  { "TABLE_ISSUER",  SYM(TABLE_ISSUER_SYM)},
+  { "TRUSTDB_SIGN_TEXT_TRANSFORM", SYM(TRUSTDB_SIGN_TEXT_TRANSFORM_SYM)},
+#endif  
 };
 
 

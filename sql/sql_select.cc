@@ -29,6 +29,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
@@ -356,6 +358,12 @@ bool handle_select(THD *thd, LEX *lex, select_result *result,
   bool res;
   SELECT_LEX *select_lex = &lex->select_lex;
   DBUG_ENTER("handle_select");
+  CLOG_TPRINTLN("==================================================================================================");
+  CLOG_FUNCTIOND("bool handle_select(THD *thd, LEX *lex, select_result *result, ulong setup_tables_done_option)");
+  CLOG_TPRINTLN("This handles SELECT with and without UNION.");  
+  CLOG_TPRINTLN("==================================================================================================");
+
+  CLOG_STEP("1","  MYSQL_SELECT_START(thd->query());");
   MYSQL_SELECT_START(thd->query());
 
   if (select_lex->master_unit()->is_unit_op() ||
@@ -370,6 +378,7 @@ bool handle_select(THD *thd, LEX *lex, select_result *result,
       every PS/SP execution new, we will not need reset this flag if 
       setup_tables_done_option changed for next rexecution
     */
+    CLOG_STEP("2","mysql_select gogogo !!!!!!!");  
     res= mysql_select(thd,
 		      select_lex->table_list.first,
 		      select_lex->with_wild, select_lex->item_list,
@@ -386,6 +395,8 @@ bool handle_select(THD *thd, LEX *lex, select_result *result,
   }
   DBUG_PRINT("info",("res: %d  report_error: %d", res,
 		     thd->is_error()));
+  CLOG_TPRINTLN("info - res: %d  report_error: %d", res,
+		     thd->is_error());
   res|= thd->is_error();
   if (unlikely(res))
     result->abort_result_set();
@@ -638,6 +649,9 @@ setup_without_group(THD *thd, Ref_ptr_array ref_pointer_array,
   enum_parsing_place save_place;
   st_select_lex *const select= thd->lex->current_select;
   nesting_map save_allow_sum_func= thd->lex->allow_sum_func;
+  CLOG_FUNCTIOND("static inline int setup_without_group(THD *thd, Ref_ptr_array ref_pointer_array,...)");
+  CLOG_TPRINTLN("Function to setup clauses without sum functions.");
+    
   /* 
     Need to stave the value, so we can turn off only any new non_agg_field_used
     additions coming from the WHERE
@@ -978,6 +992,10 @@ JOIN::prepare(TABLE_LIST *tables_init,
 	      SELECT_LEX_UNIT *unit_arg)
 {
   DBUG_ENTER("JOIN::prepare");
+  CLOG_TPRINTLN("--------------------------------------------------------------------------------------------");
+  CLOG_FUNCTIOND("int JOIN::prepare(TABLE_LIST *tables_init, uint wild_num, COND *conds_init, uint og_num...)");
+  CLOG_TPRINTLN("Check fields, find best join, do the select and output fields. mysql_select assumes that all tables are already opened");
+  CLOG_TPRINTLN("--------------------------------------------------------------------------------------------");
 
   // to prevent double initialization on EXPLAIN
   if (optimization_state != JOIN::NOT_OPTIMIZED)
@@ -996,6 +1014,7 @@ JOIN::prepare(TABLE_LIST *tables_init,
 
   // simple check that we got usable conds
   dbug_print_item(conds);
+  CLOG_TPRINTLN("simple check that we got usable conds  %s",dbug_print_item(conds));
 
   if (select_lex->handle_derived(thd->lex, DT_PREPARE))
     DBUG_RETURN(-1);
@@ -1008,6 +1027,7 @@ JOIN::prepare(TABLE_LIST *tables_init,
     Affects only materialized derived tables.
   */
   /* Check that all tables, fields, conds and order are ok */
+  CLOG_STEP("1"," Check that all tables, fields, conds and order are ok ");
   if (!(select_options & OPTION_SETUP_TABLES_DONE) &&
       setup_tables_and_check_access(thd, &select_lex->context, join_list,
                                     tables_list, select_lex->leaf_tables,
@@ -1364,6 +1384,8 @@ bool JOIN::prepare_stage2()
 {
   bool res= TRUE;
   DBUG_ENTER("JOIN::prepare_stage2");
+  CLOG_FUNCTIOND("bool JOIN::prepare_stage2()");
+  CLOG_TPRINTLN("Second phase of prepare where we collect some statistic.");
 
   /* Init join struct */
   count_field_types(select_lex, &tmp_table_param, all_fields, 0);
@@ -1507,6 +1529,9 @@ int
 JOIN::optimize_inner()
 {
   DBUG_ENTER("JOIN::optimize");
+  CLOG_FUNCTIOND("int JOIN::optimize_inner()");
+  CLOG_TPRINTLN("global select optimisation.");
+  
   subq_exit_fl= false;
   do_send_rows = (unit->select_limit_cnt) ? 1 : 0;
 
@@ -3824,6 +3849,7 @@ bool JOIN::save_explain_data(Explain_query *output, bool can_overwrite,
 
 void JOIN::exec()
 {
+  CLOG_FUNCTIOND("void JOIN::exec()");
   DBUG_EXECUTE_IF("show_explain_probe_join_exec_start", 
                   if (dbug_user_var_equals_int(thd, 
                                                "show_explain_probe_select_id", 
@@ -3831,6 +3857,7 @@ void JOIN::exec()
                         dbug_serve_apcs(thd, 1);
                  );
   ANALYZE_START_TRACKING(&explain->time_tracker);
+  CLOG_TPRINTLN("=========== exec_inner() !!!");
   exec_inner();
   ANALYZE_STOP_TRACKING(&explain->time_tracker);
 
@@ -3847,6 +3874,8 @@ void JOIN::exec_inner()
 {
   List<Item> *columns_list= &fields_list;
   DBUG_ENTER("JOIN::exec_inner");
+  CLOG_FUNCTIOND("void JOIN::exec_inner()");
+  
   DBUG_ASSERT(optimization_state == JOIN::OPTIMIZATION_DONE);
 
   THD_STAGE_INFO(thd, stage_executing);
@@ -4165,6 +4194,10 @@ mysql_select(THD *thd,
   int err= 0;
   bool free_join= 1;
   DBUG_ENTER("mysql_select");
+  CLOG_TPRINTLN("=====================================================================================");
+  CLOG_FUNCTIOND("bool mysql_select(THD *thd, TABLE_LIST *tables, uint wild_num, List<Item> &fields...");
+  CLOG_TPRINTLN("An entry point to single-unit select (a select without UNION).");
+  CLOG_TPRINTLN("=====================================================================================");
 
   select_lex->context.resolve_in_select_list= TRUE;
   JOIN *join;
@@ -4209,11 +4242,13 @@ mysql_select(THD *thd,
     */
     if (select_options & SELECT_DESCRIBE)
       free_join= 0;
-
+	CLOG_STEP("1"," new JOIN(thd, fields, select_options, result)");
+	
     if (!(join= new (thd->mem_root) JOIN(thd, fields, select_options, result)))
 	DBUG_RETURN(TRUE);
     THD_STAGE_INFO(thd, stage_init);
     thd->lex->used_tables=0;
+    CLOG_STEP("2"," join->prepare(...)");
     if ((err= join->prepare(tables, wild_num,
                             conds, og_num, order, false, group, having, proc_param,
                             select_lex, unit)))
@@ -10425,6 +10460,7 @@ make_join_select(JOIN *join,SQL_SELECT *select,COND *cond)
 {
   THD *thd= join->thd;
   DBUG_ENTER("make_join_select");
+  CLOG_FUNCTIOND("static bool make_join_select(JOIN *join,SQL_SELECT *select,COND *cond)");
   if (select)
   {
     add_not_null_conds(join);
@@ -13350,6 +13386,7 @@ return_zero_rows(JOIN *join, select_result *result, List<TABLE_LIST> &tables,
 		 const char *info, Item *having, List<Item> &all_fields)
 {
   DBUG_ENTER("return_zero_rows");
+  CLOG_FUNCTIOND("static int return_zero_rows(JOIN *join, select_result *result, List<TABLE_LIST> &tables,..");
 
   if (select_options & SELECT_DESCRIBE)
   {
@@ -16837,6 +16874,7 @@ static Field *create_tmp_field_from_item(THD *thd, Item *item, TABLE *table,
 
 Field *Item::create_field_for_schema(THD *thd, TABLE *table)
 {
+  CLOG_FUNCTIOND("Field *Item::create_field_for_schema(THD *thd, TABLE *table)");
   if (field_type() == MYSQL_TYPE_VARCHAR)
   {
     Field *field;
@@ -16895,7 +16933,10 @@ Field *create_tmp_field(THD *thd, TABLE *table,Item *item, Item::Type type,
   Field *result;
   Item::Type orig_type= type;
   Item *orig_item= 0;
-
+  CLOG_FUNCTIOND("Field *create_tmp_field(...)");
+  CLOG_TPRINTLN("Create field for temporary table.");
+  CLOG_TPRINTLN("item name = %s",item->name.str);
+  	
   DBUG_ASSERT(thd == table->in_use);
 
   if (type != Item::FIELD_ITEM &&
@@ -17063,6 +17104,10 @@ void
 setup_tmp_table_column_bitmaps(TABLE *table, uchar *bitmaps, uint field_count)
 {
   uint bitmap_size= bitmap_buffer_size(field_count);
+  
+  CLOG_FUNCTIOND("setup_tmp_table_column_bitmaps(TABLE *table, uchar *bitmaps, uint field_count)");
+  CLOG_TPRINTLN("Set up column usage bitmaps for a temporary table");
+  CLOG_TPRINTLN("field_count = 0x%08X",field_count);
 
   DBUG_ASSERT(table->s->virtual_fields == 0 && table->def_vcol_set == 0);
 
@@ -17173,6 +17218,14 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
               "rows_limit: %lu  group: %d", table_alias->str,
               (int) distinct, (int) save_sum_fields,
               (ulong) rows_limit, MY_TEST(group)));
+  CLOG_TPRINTLN("--------------------------------------");
+  CLOG_FUNCTIOND("TABLE * create_tmp_table(...");
+  CLOG_TPRINTLN("Create a temp table according to a field list");
+  CLOG_TPRINTLN("--------------------------------------");
+  CLOG_TPRINTLN("enter - table_alias: '%s'  distinct: %d  save_sum_fields: %d  "
+              "rows_limit: %lu  group: %d", table_alias->str,
+              (int) distinct, (int) save_sum_fields,
+              (ulong) rows_limit, MY_TEST(group));
 
   if (use_temp_pool && !(test_flags & TEST_KEEP_TMP_TABLES))
     temp_pool_slot = bitmap_lock_set_next(&temp_pool);
@@ -17190,10 +17243,12 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   /*
     No need to change table name to lower case as we are only creating
     MyISAM, Aria or HEAP tables here
-  */
+  */  
   fn_format(path, path, mysql_tmpdir, "",
             MY_REPLACE_EXT|MY_UNPACK_FILENAME);
+  CLOG_TPRINTLN("PATH = %s",path);
 
+  CLOG_STEP("1","ORDER group"); 
   if (group)
   {
     ORDER **prev= &group;
@@ -17228,6 +17283,9 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
   field_count=param->field_count+param->func_count+param->sum_func_count;
   hidden_field_count=param->hidden_field_count;
+  CLOG_TPRINTLN("field_count(0x%08X)=param->field_count(0x%08X)+param->func_count(0x%08X)+param->sum_func_count(0x%08X)",
+  					field_count,param->field_count,param->func_count,param->sum_func_count);
+  CLOG_TPRINTLN("hidden_field_count(0x%08X)=param->hidden_field_count",hidden_field_count);
 
   /*
     When loose index scan is employed as access method, it already
@@ -17238,9 +17296,24 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   */
   if (param->precomputed_group_by)
     copy_func_count+= param->sum_func_count;
-  
+
+  CLOG_STEP("2","Memory allocation ~~~ table,share,ref_field,default_field,blob_field,from_field..."); 
   init_sql_alloc(&own_root, "tmp_table", TABLE_ALLOC_BLOCK_SIZE, 0,
                  MYF(MY_THREAD_SPECIFIC));
+
+  CLOG_TPRINTLN("&table sizeof(*table) = %d",sizeof(*table));
+  CLOG_TPRINTLN("&share, sizeof(*share) =%d",sizeof(*share));
+  CLOG_TPRINTLN("&reg_field, sizeof(Field*) * (field_count+1) = %d,",sizeof(Field*) * (field_count+1));
+  CLOG_TPRINTLN("&default_field, sizeof(Field*) * (field_count) = %d",sizeof(Field*) * (field_count));
+  CLOG_TPRINTLN("&blob_field, sizeof(uint)*(field_count+1) = %d",sizeof(uint)*(field_count+1));
+  CLOG_TPRINTLN("&from_field, sizeof(Field*)*field_count=%d",sizeof(Field*)*field_count);
+  CLOG_TPRINTLN("&copy_func, sizeof(*copy_func)*(copy_func_count+1)=%d",sizeof(*copy_func)*(copy_func_count+1));
+  CLOG_TPRINTLN("&param->keyinfo, sizeof(*param->keyinfo)=%d",sizeof(*param->keyinfo));
+  CLOG_TPRINTLN("&key_part_info,sizeof(*key_part_info)*(param->group_parts+1)=%d",sizeof(*key_part_info)*(param->group_parts+1));
+  CLOG_TPRINTLN("&param->start_recinfo, sizeof(*param->recinfo)*(field_count*2+4)=%d",sizeof(*param->recinfo)*(field_count*2+4));
+  CLOG_TPRINTLN("&tmpname, (uint) strlen(path)+1=%d",strlen(path)+1);
+  CLOG_TPRINTLN("&group_buff, (group && ! using_unique_constraint ? param->group_length : 0) = %d",(group && ! using_unique_constraint ? param->group_length : 0));
+  CLOG_TPRINTLN("&bitmaps, bitmap_buffer_size(field_count)*6=%d",bitmap_buffer_size(field_count)*6);
 
   if (!multi_alloc_root(&own_root,
                         &table, sizeof(*table),
@@ -17282,13 +17355,15 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   bzero((char*) default_field, sizeof(Field*) * (field_count));
   bzero((char*) from_field,sizeof(Field*)*field_count);
 
+  CLOG_STEP("3","BUILD TMP TABLE !!");
+
   table->mem_root= own_root;
   mem_root_save= thd->mem_root;
   thd->mem_root= &table->mem_root;
 
   table->field=reg_field;
   table->alias.set(table_alias->str, table_alias->length, table_alias_charset);
-
+  CLOG_TPRINTLN("table_alias->str=%s",table_alias->str);	
   table->reginfo.lock_type=TL_WRITE;	/* Will be updated */
   table->map=1;
   table->temp_pool_slot = temp_pool_slot;
@@ -17301,6 +17376,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   table->no_rows_with_nulls= param->force_not_null_cols;
 
   table->s= share;
+  CLOG_TPRINTLN("init table share");
   init_tmp_table_share(thd, share, "", 0, tmpname, tmpname);
   share->blob_field= blob_field;
   share->table_charset= param->table_charset;
@@ -17312,6 +17388,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
   /* Calculate which type of fields we will store in the temporary table */
 
+  CLOG_STEP("4","Calculate which type of fields we will store in the temporary");
   reclength= string_total_length= 0;
   blob_count= string_count= null_count= hidden_null_count= group_null_items= 0;
   param->using_outer_summary_function= 0;
@@ -17319,14 +17396,21 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   List_iterator_fast<Item> li(fields);
   Item *item;
   Field **tmp_from_field=from_field;
+
+  CLOG_STEP("5","make Field !!");
   while ((item=li++))
   {
-    Item::Type type= item->type();
+    CLOG_TPRINTLN("While()----------------------------------"); 
+	Item::Type type= item->type();
+	CLOG_TPRINTLN("ITEM NAME = %s ITEM_TYPE = %d",item->name.str, type); 
+	
     if (type == Item::COPY_STR_ITEM)
     {
       item= ((Item_copy *)item)->get_item();
       type= item->type();
     }
+	CLOG_TPRINTLN("not_all_columns = %d",not_all_columns);
+
     if (not_all_columns)
     {
       if (item->with_sum_func && type != Item::SUM_FUNC_ITEM)
@@ -17350,32 +17434,35 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     }
     if (type == Item::SUM_FUNC_ITEM && !group && !save_sum_fields)
     {						/* Can't calc group yet */
-      Item_sum *sum_item= (Item_sum *) item;
+	  CLOG_STEP("4-2","SUM_FUNC_ITEM");
+
+	  Item_sum *sum_item= (Item_sum *) item;
       sum_item->result_field=0;
       for (i=0 ; i < sum_item->get_arg_count() ; i++)
       {
-	Item *arg= sum_item->get_arg(i);
-	if (!arg->const_item())
-	{
+		Item *arg= sum_item->get_arg(i);
+		CLOG_TPRINTLN("i=%d arg name=%s",arg->name.str);
+		if (!arg->const_item())
+		{
           Item *tmp_item;
           Field *new_field=
             create_tmp_field(thd, table, arg, arg->type(), &copy_func,
                              tmp_from_field, &default_field[fieldnr],
                              group != 0,not_all_columns,
                              distinct, false);
-	  if (!new_field)
-	    goto err;					// Should be OOM
+	  	  if (!new_field)
+	        goto err;					// Should be OOM
           DBUG_ASSERT(!new_field->field_name.str || strlen(new_field->field_name.str) == new_field->field_name.length);
-	  tmp_from_field++;
-	  reclength+=new_field->pack_length();
-	  if (new_field->flags & BLOB_FLAG)
-	  {
-	    *blob_field++= fieldnr;
-	    blob_count++;
-	  }
+	      tmp_from_field++;
+	      reclength+=new_field->pack_length();
+	      if (new_field->flags & BLOB_FLAG)
+	      {
+	        *blob_field++= fieldnr;
+	        blob_count++;
+	      }
           if (new_field->type() == MYSQL_TYPE_BIT)
             total_uneven_bit_length+= new_field->field_length & 7;
-	  *(reg_field++)= new_field;
+	      *(reg_field++)= new_field;
           if (new_field->real_type() == MYSQL_TYPE_STRING ||
               new_field->real_type() == MYSQL_TYPE_VARCHAR)
           {
@@ -17389,21 +17476,21 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
           arg= sum_item->set_arg(i, thd, tmp_item);
           thd->mem_root= &table->mem_root;
           if (param->force_not_null_cols)
-	  {
+	      {
             new_field->flags|= NOT_NULL_FLAG;
             new_field->null_ptr= NULL;
           }
-	  if (!(new_field->flags & NOT_NULL_FLAG))
+	      if (!(new_field->flags & NOT_NULL_FLAG))
           {
-	    null_count++;
+	        null_count++;
             /*
               new_field->maybe_null() is still false, it will be
               changed below. But we have to setup Item_field correctly
-            */
+              */
             arg->maybe_null=1;
           }
-          new_field->field_index= fieldnr++;
-	}
+        new_field->field_index= fieldnr++;
+	    }
       }
     }
     else
@@ -17421,6 +17508,8 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
         The test for item->marker == 4 is ensure we don't create a group-by
         key over a bit field as heap tables can't handle that.
       */
+   	  CLOG_STEP("4-3","!SUM_FUNC_ITEM , create tmp field!");
+	  
       Field *new_field= (param->schema_table) ?
         item->create_field_for_schema(thd, table) :
         create_tmp_field(thd, table, item, type, &copy_func,
@@ -17477,6 +17566,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
         new_field->null_ptr= NULL;
       }
       reclength+=new_field->pack_length();
+	  CLOG_TPRINTLN("reclength(0x%08X) = new_field->pack_length()(0x%08X)",reclength,new_field->pack_length());
       if (!(new_field->flags & NOT_NULL_FLAG))
 	null_count++;
       if (new_field->type() == MYSQL_TYPE_BIT)
@@ -17492,6 +17582,8 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
       {
         string_count++;
         string_total_length+= new_field->pack_length();
+		CLOG_TPRINTLN("string_count=0x%08X",string_count);
+		CLOG_TPRINTLN("string_total_length(0x%08X)+= new_field->pack_length()(0x%08X)",string_total_length,new_field->pack_length());
       }
 
       if (item->marker == 4 && item->maybe_null)
@@ -17500,6 +17592,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 	new_field->flags|= GROUP_FLAG;
       }
       new_field->field_index= fieldnr++;
+	  CLOG_TPRINTLN("new_field->field_index(0x%08X)",new_field->field_index);
       *(reg_field++)= new_field;
     }
     if (!--hidden_field_count)
@@ -17532,6 +17625,8 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   *blob_field= 0;				// End marker
   share->fields= field_count;
   share->column_bitmap_size= bitmap_buffer_size(share->fields);
+
+  CLOG_STEP("5","Buid share info?");
 
   /* If result table is small; use a heap */
   /* future: storage engine selection can be made dynamic? */
@@ -17590,19 +17685,28 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     use_packed_rows= 1;
 
   share->reclength= reclength;
+  CLOG_TPRINTLN("reclength(0x%08X)",reclength);
   {
     uint alloc_length=ALIGN_SIZE(reclength+MI_UNIQUE_HASH_LENGTH+1);
     share->rec_buff_length= alloc_length;
+    CLOG_STEP("6","mem alloc table->record[0]");
+	CLOG_TPRINTLN(" (aligned) alloc_length(%d)*3)",alloc_length);
     if (!(table->record[0]= (uchar*)
                             alloc_root(&table->mem_root, alloc_length*3)))
       goto err;
     table->record[1]= table->record[0]+alloc_length;
     share->default_values= table->record[1]+alloc_length;
+	CLOG_TPRINTLN("table->record[0] (0x%08X)",table->record[0]);
+	CLOG_TPRINTLN("table->record[1] (0x%08X) = table->record[0]+alloc_length;",table->record[1]);	
+	CLOG_TPRINTLN("share->default_values (0x%08X) = table->record[1]+alloc_length;",share->default_values);	
   }
   copy_func[0]=0;				// End marker
   param->func_count= (uint)(copy_func - param->items_to_copy); 
 
+  CLOG_STEP("7","setup_tmp_table_column_bitmaps");
   setup_tmp_table_column_bitmaps(table, bitmaps);
+
+  CLOG_STEP("8","Column(field) define?");
 
   recinfo=param->start_recinfo;
   null_flags=(uchar*) table->record[0];
@@ -17626,7 +17730,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     Field *field= *reg_field;
     uint length;
     bzero((uchar*) recinfo,sizeof(*recinfo));
-
+    CLOG_TPRINTLN("for( table->field ...)  field name=%s",field->field_name.str);
     if (!(field->flags & NOT_NULL_FLAG))
     {
       recinfo->null_bit= (uint8)1 << (null_count & 7);
@@ -17657,6 +17761,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
          inherit the default value that is defined for the field referred
          by the Item_field object from which 'field' has been created.
       */
+      CLOG_TPRINTLN("Default field!");
       const Field *orig_field= default_field[i];
       /* Get the value from default_values */
       if (orig_field->is_null_in_record(orig_field->table->s->default_values))
@@ -17672,6 +17777,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
     if (from_field[i])
     {						/* Not a table Item */
+      CLOG_TPRINTLN("Not a table item");
       copy->set(field,from_field[i],save_sum_fields);
       copy++;
     }
@@ -17679,6 +17785,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     pos+= length;
 
     /* Make entry for create table */
+	CLOG_TPRINTLN("Make entry for create table");
     recinfo->length=length;
     if (field->flags & BLOB_FLAG)
       recinfo->type= FIELD_BLOB;
@@ -17696,6 +17803,18 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
     // fix table name in field entry
     field->set_table_name(&table->alias);
+	CLOG_TPRINTLN("[REC_INFO] ADDR = 0x%08X",recinfo);
+	CLOG_TPRINTLN("[REC_INFO] type = 0x%08X",recinfo->type);
+	CLOG_TPRINTLN("[REC_INFO] offset = 0x%08X",recinfo->offset);
+	CLOG_TPRINTLN("[REC_INFO] length = 0x%08X",recinfo->length);
+	CLOG_TPRINTLN("[REC_INFO] column_nr = 0x%08X",recinfo->column_nr);
+	CLOG_TPRINTLN("[REC_INFO] fill_ength = 0x%08X",recinfo->fill_length);
+//	ZLOG_TPRINTLN("[REC_INFO] nul_pos = 0x%08X",recinfo->nulL_pos);
+	CLOG_TPRINTLN("[REC_INFO] empty_pos = 0x%08X",recinfo->empty_pos);
+	CLOG_TPRINTLN("[REC_INFO] null_bit = 0x%08X",recinfo->null_bit);
+	CLOG_TPRINTLN("[REC_INFO] empty_bit = 0x%08X",recinfo->empty_bit);
+
+	
   }
 
   param->copy_field_end=copy;
@@ -17723,6 +17842,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
   if (group)
   {
     DBUG_PRINT("info",("Creating group key in temporary table"));
+    CLOG_STEP("8","keyinfo!!");
     table->group=group;				/* Table is grouped by key */
     param->group_buff=group_buff;
     share->keys=1;
@@ -17746,6 +17866,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
     for (; cur_group ; cur_group= cur_group->next, key_part_info++)
     {
       Field *field=(*cur_group->item)->get_tmp_table_field();
+	  CLOG_TPRINTLN("for (ORDER *cur_group )    field_name=%s",field->field_name.str);
       DBUG_ASSERT(field->table == table);
       bool maybe_null=(*cur_group->item)->maybe_null;
       key_part_info->null_bit=0;
@@ -17777,7 +17898,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
           */
           (*cur_group->item)->maybe_null= maybe_null= 0;
         }
-
+		CLOG_TPRINTLN("new key field");
 	if (!(cur_group->field= field->new_key_field(thd->mem_root,table,
                                                      group_buff +
                                                      MY_TEST(maybe_null),
@@ -17822,7 +17943,7 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
       in the first 'hidden_null_pack_length' bytes of the row.
     */
     DBUG_PRINT("info",("hidden_field_count: %d", param->hidden_field_count));
-
+    CLOG_TPRINTLN("info - hidden_field_count: %d", param->hidden_field_count);
     if (blob_count)
     {
       /*
@@ -17898,12 +18019,14 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
       key_part_info++;
     }
     /* Create a distinct key over the columns we are going to return */
+    CLOG_STEP("9","Create a distinct key over the columns we are going to return");
     for (i=param->hidden_field_count, reg_field=table->field + i ;
 	 i < field_count;
 	 i++, reg_field++, key_part_info++)
     {
       key_part_info->field=    *reg_field;
       (*reg_field)->flags |= PART_KEY_FLAG;
+	  CLOG_TPRINTLN("for reg_field, key_part_info)   key_part_info->field.name = %s",key_part_info->field->field_name.str);
       if (key_part_info == keyinfo->key_part)
         (*reg_field)->key_start.set_bit(0);
       key_part_info->null_bit= (*reg_field)->null_bit;
@@ -17961,12 +18084,14 @@ create_tmp_table(THD *thd, TMP_TABLE_PARAM *param, List<Item> &fields,
 
   if (!do_not_open)
   {
+    CLOG_STEP("10","instantiate_tmp_tabl(..)");
     if (instantiate_tmp_table(table, param->keyinfo, param->start_recinfo,
                               &param->recinfo, select_options))
       goto err;
   }
 
   // Make empty record so random data is not written to disk
+  CLOG_STEP("11","Make empty record so random data is not written to disk");
   empty_record(table);
 
   thd->mem_root= mem_root_save;
@@ -18157,6 +18282,7 @@ bool Virtual_tmp_table::sp_set_all_fields_from_item(THD *thd, Item *value)
 
 bool open_tmp_table(TABLE *table)
 {
+  CLOG_FUNCTIOND("bool open_tmp_table(TABLE *table)");
   int error;
   if (unlikely((error= table->file->ha_open(table, table->s->table_name.str,
                                             O_RDWR,
@@ -18222,7 +18348,9 @@ bool create_internal_tmp_table(TABLE *table, KEY *keyinfo,
   TABLE_SHARE *share= table->s;
   MARIA_CREATE_INFO create_info;
   DBUG_ENTER("create_internal_tmp_table");
-
+  CLOG_FUNCTIOND("bool create_internal_tmp_table(TABLE *table, KEY *keyinfo, ...)");
+  CLOG_TPRINTLN("Create internal (MyISAM or Maria) temporary table");
+  
   if (share->keys)
   {						// Get keys for ni_create
     bool using_unique_constraint=0;
@@ -18841,6 +18969,8 @@ do_select(JOIN *join, Procedure *procedure)
   int rc= 0;
   enum_nested_loop_state error= NESTED_LOOP_OK;
   DBUG_ENTER("do_select");
+  CLOG_FUNCTIOND("static int do_select(JOIN *join, Procedure *procedure)");
+  CLOG_FUNCTIOND("Make a join of all tables and write it on socket or to table.");
 
   if (join->pushdown_query)
   {
@@ -19042,6 +19172,9 @@ bool instantiate_tmp_table(TABLE *table, KEY *keyinfo,
                            TMP_ENGINE_COLUMNDEF **recinfo,
                            ulonglong options)
 {
+  CLOG_FUNCTIOND("bool instantiate_tmp_table(...)");
+  CLOG_TPRINTLN("Instantiates temporary table");
+
   if (table->s->db_type() == TMP_ENGINE_HTON)
   {
     /*
@@ -23467,6 +23600,8 @@ count_field_types(SELECT_LEX *select_lex, TMP_TABLE_PARAM *param,
 {
   List_iterator<Item> li(fields);
   Item *field;
+  CLOG_FUNCTIOND("void count_field_types(SELECT_LEX *select_lex, TMP_TABLE_PARAM *param,...");
+  CLOG_TPRINTLN("Update join with count of the different type of fields.");
 
   param->field_count=param->sum_func_count=param->func_count=
     param->hidden_field_count=0;
@@ -25785,6 +25920,7 @@ static void select_describe(JOIN *join, bool need_tmp_table, bool need_order,
   THD *thd=join->thd;
   select_result *result=join->result;
   DBUG_ENTER("select_describe");
+  CLOG_TPRINTLN("This function serves as 'shortcut point' for EXPLAIN queries");
   
   /* Update the QPF with latest values of using_temporary, using_filesort */
   for (SELECT_LEX_UNIT *unit= join->select_lex->first_inner_unit();

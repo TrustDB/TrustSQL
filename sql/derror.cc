@@ -20,7 +20,6 @@
   @brief
   Read language depeneded messagefile
 */
-
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "unireg.h"
@@ -29,6 +28,7 @@
 #include "mysqld.h"                             // lc_messages_dir
 #include "derror.h"                             // read_texts
 #include "sql_class.h"                          // THD
+#include "clog.h"
 
 uint errors_per_range[MAX_ERROR_RANGES+1];
 
@@ -193,7 +193,13 @@ static File open_error_msg_file(const char *file_name, const char *language,
   char name[FN_REFLEN];
   char lang_path[FN_REFLEN];
   uchar head[32];
+
   DBUG_ENTER("open_error_msg_file");
+  CLOG_FUNCTIOND("static File open_error_msg_file(const char *file_name, const char *language...");
+
+  CLOG_TPRINTLN("file_name = %s",file_name);
+  CLOG_TPRINTLN("language = %s",language);
+  CLOG_TPRINTLN("lang_path = %s",lang_path);
 
   convert_dirname(lang_path, language, NullS);
   (void) my_load_path(lang_path, lang_path, lc_messages_dir);

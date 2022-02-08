@@ -27,6 +27,7 @@
 #include "thr_lock.h"                  /* thr_lock_type */
 #include "my_base.h"                   /* ha_rows, ha_key_alg */
 #include <mysql_com.h>                  /* USERNAME_LENGTH */
+#include "clog.h"
 
 struct TABLE;
 class Type_handler;
@@ -515,7 +516,12 @@ public:
     OPT_OR_REPLACE= 16,                // CREATE OR REPLACE TABLE
     OPT_OR_REPLACE_SLAVE_GENERATED= 32,// REPLACE was added on slave, it was
                                        // not in the original query on master.
-    OPT_IF_EXISTS= 64
+    OPT_IF_EXISTS= 64,
+#ifdef TRUSTSQL_BUILD    
+	// Trusted Ledger
+	OPT_TRUSTED= 128,					// CREATE TRUSTED TABLE IF NOT EXISTS
+	OPT_TRUSTED_ORDERED= 256			// CREATE TRUSTED TABLE IF NOT EXISTS
+#endif	
   };
 
 private:
@@ -543,6 +549,10 @@ public:
   { return m_options & OPT_OR_REPLACE_SLAVE_GENERATED; }
   bool like() const { return m_options & OPT_LIKE; }
   bool if_exists() const { return m_options & OPT_IF_EXISTS; }
+#ifdef TRUSTSQL_BUILD
+  bool is_Trusted() const { return (m_options & OPT_TRUSTED)|(m_options & OPT_TRUSTED_ORDERED); }
+  bool is_Trusted_Ordered() const { return m_options & OPT_TRUSTED_ORDERED; }
+#endif
   void add(const DDL_options_st::Options other)
   {
     m_options= (Options) ((uint) m_options | (uint) other);

@@ -19,6 +19,8 @@
 #ifdef USE_PRAGMA_IMPLEMENTATION
 #pragma implementation				// gcc: Class implementation
 #endif
+
+
 #include "mariadb.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
 #include "sql_priv.h"
 #include <mysql.h>

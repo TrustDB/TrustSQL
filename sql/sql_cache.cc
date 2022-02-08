@@ -329,6 +329,8 @@ TODO list:
 */
 
 #include "mariadb.h"                          /* NO_EMBEDDED_ACCESS_CHECKS */
+
+#include "clog.h"
 #if defined(DBUG_OFF) && defined(HAVE_MADVISE)
 #include <sys/mman.h>
 #endif
@@ -1370,6 +1372,8 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
   size_t query_length;
   uint8 tables_type;
   DBUG_ENTER("Query_cache::store_query");
+  CLOG_FUNCTIOND("void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)");
+  
   /*
     Testing 'query_cache_size' without a lock here is safe: the thing
     we may loose is that the query won't be cached, but we save on
@@ -1378,9 +1382,14 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
 
     See also a note on double-check locking usage above.
   */
+  CLOG_STEP("1","Testing query_cache_size without a lock here is safe..");
+  CLOG_TPRINTLN("thd->query_cache_is_applicable= %d",thd->query_cache_is_applicable);
+  CLOG_TPRINTLN("query_cache_size= %d",query_cache_size);
+  
   if (!thd->query_cache_is_applicable || query_cache_size == 0)
   {
     DBUG_PRINT("qcache", ("Query cache not ready"));
+	CLOG_TPRINTLN("qcache - Query cache not ready");
     DBUG_VOID_RETURN;
   }
   if (thd->lex->sql_command != SQLCOM_SELECT)
@@ -1473,6 +1482,29 @@ def_week_frmt: %zu, in_trans: %d, autocommit: %d",
                           flags.default_week_format,
                           (int)flags.in_trans,
                           (int)flags.autocommit));
+	CLOG_TPRINTLN("qcache - \
+long %d, 4.1: %d, eof: %d, bin_proto: %d, more results %d, pkt_nr: %d, \
+CS client: %u, CS result: %u, CS conn: %u, limit: %llu, TZ: %p, \
+sql mode: 0x%llx, sort len: %llu, conncat len: %llu, div_precision: %zu, \
+def_week_frmt: %zu, in_trans: %d, autocommit: %d",
+                          (int)flags.client_long_flag,
+                          (int)flags.client_protocol_41,
+                          (int)flags.client_depr_eof,
+                          (int)flags.protocol_type,
+                          (int)flags.more_results_exists,
+                          flags.pkt_nr,
+                          flags.character_set_client_num,
+                          flags.character_set_results_num,
+                          flags.collation_connection_num,
+                          (ulonglong)flags.limit,
+                          flags.time_zone,
+                          flags.sql_mode,
+                          flags.max_sort_length,
+                          flags.group_concat_max_len,
+                          flags.div_precision_increment,
+                          flags.default_week_format,
+                          (int)flags.in_trans,
+                          (int)flags.autocommit);
 
     /*
       A table- or a full flush operation can potentially take a long time to
@@ -1511,6 +1543,8 @@ def_week_frmt: %zu, in_trans: %d, autocommit: %d",
              thd->db.str, thd->db.length);
       DBUG_PRINT("qcache", ("database: %s  length: %u",
 			    thd->db.str, (unsigned) thd->db.length));
+	  CLOG_TPRINTLN("qcache - database: %s  length: %u",
+			    thd->db.str, (unsigned) thd->db.length);
     }
     else
     {
@@ -2230,6 +2264,7 @@ void Query_cache::invalidate(THD *thd, TABLE_LIST *tables_used,
 			     my_bool using_transactions)
 {
   DBUG_ENTER("Query_cache::invalidate (table list)");
+  CLOG_FUNCTIOND("void Query_cache::invalidate(THD *thd, TABLE_LIST *tables_used,..)");
   if (is_disabled())
     DBUG_VOID_RETURN;
 

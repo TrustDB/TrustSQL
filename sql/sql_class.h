@@ -18,7 +18,6 @@
 #ifndef SQL_CLASS_INCLUDED
 #define SQL_CLASS_INCLUDED
 
-/* Classes in mysql */
 
 #include "dur_prop.h"
 #include <waiting_threads.h>
@@ -47,6 +46,7 @@
 #include <mysql/psi/mysql_table.h>
 #include <mysql_com_server.h>
 #include "session_tracker.h"
+#include "clog.h"
 
 extern "C"
 void set_thd_stage_info(void *thd,
@@ -377,6 +377,10 @@ public:
     match_opt(match_opt_arg)
    {
     // We don't check for duplicate FKs.
+    CLOG_FUNCTIOND("Foreign_key(const LEX_CSTRING *name_arg, List<Key_part_spec> *cols...)");
+	CLOG_TPRINTLN(" name_arg = %s",name_arg->str);
+	CLOG_TPRINTLN(" ref_db_arg= %s",ref_db_arg->str);
+	CLOG_TPRINTLN(" ref_table_arg = %s",ref_table_arg->str);	
     key_create_info.check_for_duplicate_indexes= false;
   }
  Foreign_key(const Foreign_key &rhs, MEM_ROOT *mem_root);

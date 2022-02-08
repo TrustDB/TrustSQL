@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "==========================="
+echo "TrustSQL CMAKE BUILD       "
+echo "==========================="
+
+cmake . -DCMAKE_TRUSTSQL_BUILD=DEBUG 
+
+touch ./sql/sqyl_yacc.yy
+
+
+

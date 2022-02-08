@@ -42,6 +42,8 @@
 #include <my_dir.h>
 #include <m_ctype.h>
 #include "log.h"
+
+#include "clog.h"
 #ifdef __WIN__
 #include <direct.h>
 #endif
@@ -1297,6 +1299,8 @@ static void mysql_change_db_impl(THD *thd,
                                  ulong new_db_access,
                                  CHARSET_INFO *new_db_charset)
 {
+  CLOG_FUNCTIOND("static void mysql_change_db_impl(THD *thd,LEX_CSTRING *new_db_name,...)");
+  CLOG_STEP("1","Change current database in THD");
   /* 1. Change current database in THD. */
 
   if (new_db_name == NULL)
@@ -1329,12 +1333,14 @@ static void mysql_change_db_impl(THD *thd,
   }
 
   /* 2. Update security context. */
+  CLOG_STEP("2","Update security context");
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
   thd->security_ctx->db_access= new_db_access;
 #endif
 
   /* 3. Update db-charset environment variables. */
+  CLOG_STEP("3","Update db-charset environment variables");
 
   thd->db_charset= new_db_charset;
   thd->variables.collation_database= new_db_charset;
@@ -1447,6 +1453,10 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
   CHARSET_INFO *db_default_cl;
   DBUG_ENTER("mysql_change_db");
 
+  CLOG_FUNCTIOND("bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,bool force_switch)");
+  CLOG_TPRINTLN("new_db_name=%s,  force_switch=%d",new_db_name->str,force_switch);
+  
+  CLOG_STEP("1","Check name length & force_switch...");
   if (new_db_name->length == 0)
   {
     if (force_switch)
@@ -1473,9 +1483,12 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
   }
   DBUG_PRINT("enter",("name: '%s'", new_db_name->str));
 
+  CLOG_STEP("2","Check is_infoschema_db(new_db_name)");
+
   if (is_infoschema_db(new_db_name))
   {
     /* Switch the current database to INFORMATION_SCHEMA. */
+	CLOG_STEP("2.1","Switch the current database to INFORMATION_SCHEMA");
 
     mysql_change_db_impl(thd, &INFORMATION_SCHEMA_NAME, SELECT_ACL,
                          system_charset_info);
@@ -1506,6 +1519,8 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
     The cast below ok here as new_db_file_name was just allocated
   */
 
+  CLOG_STEP("3","check db name, if fails, we should throw an error in any case..");
+
   if (check_db_name((LEX_STRING*) &new_db_file_name))
   {
     my_error(ER_WRONG_DB_NAME, MYF(0), new_db_file_name.str);
@@ -1518,8 +1533,11 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
   }
 
   DBUG_PRINT("info",("Use database: %s", new_db_file_name.str));
+  CLOG_TPRINTLN("Use database: %s", new_db_file_name.str);
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
+  CLOG_STEP("4","Security Check....");
+
   if (test_all_bits(sctx->master_access, DB_ACLS))
     db_access= DB_ACLS;
   else
@@ -1549,6 +1567,8 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
 #endif
 
   DEBUG_SYNC(thd, "before_db_dir_check");
+
+  CLOG_STEP("5","check db dir existence");
 
   if (check_db_dir_existence(new_db_file_name.str))
   {
@@ -1587,8 +1607,10 @@ bool mysql_change_db(THD *thd, const LEX_CSTRING *new_db_name,
     attributes and will be freed in THD::~THD().
   */
 
+  CLOG_STEP("6","get_default_db_collation");
   db_default_cl= get_default_db_collation(thd, new_db_file_name.str);
 
+  CLOG_STEP("7","mysql_change_db_impl");
   mysql_change_db_impl(thd, &new_db_file_name, db_access, db_default_cl);
 
 done:

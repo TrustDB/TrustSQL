@@ -18,9 +18,16 @@
   main() for mysqld.
   Calls mysqld_main() entry point exported by sql library.
 */
+#ifdef TRUSTSQL_BUILD
+#include <clog.h>
+#endif
+
 extern int mysqld_main(int argc, char **argv);
 
 int main(int argc, char **argv)
 {
-  return mysqld_main(argc, argv);
+	CLOG_FUNCTIOND("int main(int argc, char **argv)");
+
+	return mysqld_main(argc, argv);
+
 }

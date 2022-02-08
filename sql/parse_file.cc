@@ -27,6 +27,7 @@
 #include "sql_table.h"                        // build_table_filename
 #include <m_ctype.h>
 #include <my_dir.h>
+#include "clog.h"
 
 /* from sql_db.cc */
 extern long mysql_rm_arc_files(THD *thd, MY_DIR *dirp, const char *org_path);
@@ -261,6 +262,8 @@ sql_create_definition_file(const LEX_CSTRING *dir,
   DBUG_PRINT("enter", ("Dir: %s, file: %s, base %p",
 		       dir ? dir->str : "",
                        file_name->str, base));
+  CLOG_FUNCTIOND("my_bool sql_create_definition_file(const LEX_CSTRING *dir, const LEX_CSTRING *file_name,...)");
+  CLOG_TPRINTLN("enter", ("Dir: %s, file: %s, base %p",  dir ? dir->str : "", file_name->str, base));
 
   if (dir)
   {
@@ -408,6 +411,8 @@ sql_parse_prepare(const LEX_CSTRING *file_name, MEM_ROOT *mem_root,
   File_parser *parser;
   File file;
   DBUG_ENTER("sql_parse_prepare");
+  CLOG_FUNCTIOND("File_parser * sql_parse_prepare(const LEX_CSTRING *file_name, MEM_ROOT *mem_root...");
+  CLOG_TPRINTLN("Prepare frm to parse (read to memory)   file_name=%s",file_name->str);
 
   if (!mysql_file_stat(key_file_fileparser,
                        file_name->str, &stat_info, MYF(MY_WME)))
@@ -420,7 +425,7 @@ sql_parse_prepare(const LEX_CSTRING *file_name, MEM_ROOT *mem_root,
     my_error(ER_FPARSER_TOO_BIG_FILE, MYF(0), file_name->str);
     DBUG_RETURN(0);
   }
-
+  CLOG_STEP("1","new File_parser");
   if (!(parser= new(mem_root) File_parser))
   {
     DBUG_RETURN(0);
@@ -436,7 +441,7 @@ sql_parse_prepare(const LEX_CSTRING *file_name, MEM_ROOT *mem_root,
   {
     DBUG_RETURN(0);
   }
-  
+  CLOG_STEP("2","Read frm and set the pointer to File_parser");  
   if ((len= mysql_file_read(file, (uchar *)buff, (size_t)stat_info.st_size,
                             MYF(MY_WME))) == MY_FILE_ERROR)
   {

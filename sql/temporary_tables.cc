@@ -27,6 +27,7 @@
 #include "sql_show.h"                           /* append_identifier */
 #include "sql_handler.h"                        /* mysql_ha_rm_temporary_tables */
 #include "rpl_rli.h"                            /* rpl_group_info */
+#include "clog.h"
 
 #define IS_USER_TABLE(A) ((A->tmp_table == TRANSACTIONAL_TMP_TABLE) || \
                           (A->tmp_table == NON_TRANSACTIONAL_TMP_TABLE))
@@ -327,6 +328,8 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
 {
   DBUG_ENTER("THD::open_temporary_table");
   DBUG_PRINT("enter", ("table: '%s'.'%s'", tl->db.str, tl->table_name.str));
+  CLOG_FUNCTIOND("bool THD::open_temporary_table(TABLE_LIST *tl)");
+  CLOG_TPRINTLN("enter - table: '%s'.'%s'", tl->db.str, tl->table_name.str);
 
   TMP_TABLE_SHARE *share;
   TABLE *table= NULL;
@@ -348,6 +351,7 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
   if (tl->open_type == OT_BASE_ONLY || !has_temporary_tables())
   {
     DBUG_PRINT("info", ("skip_temporary is set or no temporary tables"));
+	CLOG_TPRINTLN("info - skip_temporary is set or no temporary tables");
     DBUG_RETURN(false);
   }
 
@@ -435,6 +439,7 @@ bool THD::open_temporary_table(TABLE_LIST *tl)
 bool THD::open_temporary_tables(TABLE_LIST *tl)
 {
   DBUG_ENTER("THD::open_temporary_tables");
+  CLOG_FUNCTIOND("bool THD::open_temporary_tables(TABLE_LIST *tl)");
 
   TABLE_LIST *first_not_own= lex->first_not_own_table();
 

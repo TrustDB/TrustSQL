@@ -38,6 +38,8 @@
 #include "sql_show.h"
 #include "sql_view.h"   // updatable_views_with_limit_typelib
 #include "lock.h"                               // lock_global_read_lock,
+
+#include "clog.h"
                                                 // make_global_read_lock_block_commit,
                                                 // unlock_global_read_lock
 
@@ -59,15 +61,16 @@ sys_var_chain all_sys_vars = { NULL, NULL };
 
 int sys_var_init()
 {
+  CLOG_FUNCTIOND("int sys_var_init()");
   DBUG_ENTER("sys_var_init");
 
   /* Must be already initialized. */
   DBUG_ASSERT(system_charset_info != NULL);
-
+  CLOG_STEP("1","hash init");
   if (my_hash_init(&system_variable_hash, system_charset_info, 700, 0,
                    0, (my_hash_get_key) get_sys_var_length, 0, HASH_UNIQUE))
     goto error;
-
+  CLOG_STEP("2","mysql_add_sys_var_chain");
   if (mysql_add_sys_var_chain(all_sys_vars.first))
     goto error;
 

@@ -13,7 +13,6 @@
    along with this program; if not, write to the Free Software Foundation,
    51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA */
 
-
 #include "mariadb.h"
 #include "sql_class.h"
 #include "debug_sync.h"
@@ -26,6 +25,7 @@
 #include <mysql/psi/mysql_stage.h>
 #include "wsrep_mysqld.h"
 #include "wsrep_thd.h"
+#include "clog.h"
 
 #ifdef HAVE_PSI_INTERFACE
 static PSI_mutex_key key_MDL_wait_LOCK_wait_status;
@@ -2065,6 +2065,8 @@ MDL_context::acquire_lock(MDL_request *mdl_request, double lock_wait_timeout)
   MDL_wait::enum_wait_status wait_status;
   DBUG_ENTER("MDL_context::acquire_lock");
   DBUG_PRINT("enter", ("lock_type: %d", mdl_request->type));
+  CLOG_FUNCTIOND("bool MDL_context::acquire_lock(MDL_request *mdl_request, double lock_wait_timeout)");
+  CLOG_TPRINTLN("enter - lock_type: %d", mdl_request->type);
 
   if (try_acquire_lock_impl(mdl_request, &ticket))
     DBUG_RETURN(TRUE);

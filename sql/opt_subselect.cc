@@ -26,6 +26,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "sql_base.h"
 #include "sql_select.h"
@@ -562,6 +564,8 @@ int check_and_do_in_subquery_rewrites(JOIN *join)
   st_select_lex *select_lex= join->select_lex;
   st_select_lex_unit* parent_unit= select_lex->master_unit();
   DBUG_ENTER("check_and_do_in_subquery_rewrites");
+  CLOG_FUNCTIOND("int check_and_do_in_subquery_rewrites(JOIN *join)");
+  CLOG_TPRINTLN("Check if we need JOIN::prepare()-phase subquery rewrites and if yes, do them");
 
   /*
     IN/ALL/ANY rewrites are not applicable for so called fake select

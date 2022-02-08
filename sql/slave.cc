@@ -53,6 +53,7 @@
                                                 // Create_file_log_event,
                                                 // Format_description_log_event
 #include "wsrep_mysqld.h"
+#include "clog.h"
 
 #ifdef HAVE_REPLICATION
 
@@ -670,6 +671,8 @@ stop_slave_background_thread()
 int init_slave()
 {
   DBUG_ENTER("init_slave");
+  CLOG_FUNCTIOND("int init_slave()");
+  
   int error= 0;
 
 #ifdef HAVE_PSI_INTERFACE

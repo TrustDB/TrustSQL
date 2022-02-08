@@ -69,7 +69,6 @@
   excluding one that caused failure. That means handler must cleanup itself
   in case external_lock() fails.
 */
-
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "debug_sync.h"
@@ -79,6 +78,7 @@
 #include "sql_acl.h"                       // SUPER_ACL
 #include <hash.h>
 #include "wsrep_mysqld.h"
+#include "clog.h"
 
 /**
   @defgroup Locking Locking
@@ -290,6 +290,7 @@ MYSQL_LOCK *mysql_lock_tables(THD *thd, TABLE **tables, uint count, uint flags)
   MYSQL_LOCK *sql_lock;
   uint gld_flags= GET_LOCK_STORE_LOCKS;
   DBUG_ENTER("mysql_lock_tables(tables)");
+  CLOG_FUNCTIOND("MYSQL_LOCK *mysql_lock_tables(THD *thd, TABLE **tables, uint count, uint flags)");
 
   if (lock_tables_check(thd, tables, count, flags))
     DBUG_RETURN(NULL);

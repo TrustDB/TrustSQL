@@ -34,7 +34,6 @@
   HFTODO this must be hidden if we don't want client capabilities in 
   embedded library
  */
-
 #include "mariadb.h"
 #include <mysql.h>
 #include <mysql_com.h>
@@ -46,6 +45,7 @@
 #include <signal.h>
 #include "probes_mysql.h"
 #include "proxy_protocol.h"
+#include "clog.h"
 
 #ifdef EMBEDDED_LIBRARY
 #undef MYSQL_SERVER
@@ -378,8 +378,11 @@ my_bool net_flush(NET *net)
 {
   my_bool error= 0;
   DBUG_ENTER("net_flush");
+  CLOG_FUNCTIOND("my_bool net_flush(NET *net)");
   if (net->buff != net->write_pos)
   {
+//	ZLOG_TPRINTLN("!!! write_buffer = %s",net->buff);
+//	ZLOG_DISPBUFFER(net->buff,(size_t) (net->write_pos - net->buff));
     error= MY_TEST(net_real_write(net, net->buff,
                                   (size_t) (net->write_pos - net->buff)));
     net->write_pos= net->buff;
@@ -408,7 +411,7 @@ my_bool my_net_write(NET *net, const uchar *packet, size_t len)
 {
   uchar buff[NET_HEADER_SIZE];
   int rc;
-
+  CLOG_FUNCTIOND("my_bool my_net_write(NET *net, const uchar *packet, size_t len)");
   if (unlikely(!net->vio)) /* nowhere to write */
     return 0;
 
@@ -443,8 +446,13 @@ my_bool my_net_write(NET *net, const uchar *packet, size_t len)
   }
 #ifndef DEBUG_DATA_PACKETS
   DBUG_DUMP("packet_header", buff, NET_HEADER_SIZE);
+//  ZLOG_TPRINTLN("packet_header =");
+//  ZLOG_DISPBUFFER(buff,NET_HEADER_SIZE)
 #endif
   rc= MY_TEST(net_write_buff(net, packet, len));
+ // ZLOG_TPRINTLN("packet =");
+//  ZLOG_DISPBUFFER(packet,len)
+
   MYSQL_NET_WRITE_DONE(rc);
   return rc;
 }

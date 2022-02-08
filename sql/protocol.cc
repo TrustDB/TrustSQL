@@ -25,6 +25,8 @@
 #pragma implementation				// gcc: Class implementation
 #endif
 
+#include "clog.h"
+
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "protocol.h"
@@ -555,6 +557,13 @@ void Protocol::end_statement()
   DBUG_ASSERT_IF_WSREP(!(WSREP(thd) && thd->wsrep_conflict_state == REPLAYING));
   DBUG_ENTER("Protocol::end_statement");
   DBUG_ASSERT(! thd->get_stmt_da()->is_sent());
+
+  CLOG_TPRINTLN("-------------------------------------------");
+  CLOG_FUNCTIOND("void Protocol::end_statement()");
+  CLOG_TPRINTLN("Send the status of the current statement execution over network.");
+  CLOG_TPRINTLN("-------------------------------------------");
+  
+  	
   bool error= FALSE;
 
   /* Can not be true, but do not take chances in production. */
@@ -609,6 +618,14 @@ bool Protocol::send_ok(uint server_status, uint statement_warn_count,
                        const char *message, bool skip_flush)
 {
   DBUG_ENTER("Protocol::send_ok");
+  CLOG_FUNCTIOND("======= Protocol::send_ok() "); 
+  CLOG_TPRINTLN("P1 : Server_status  = %d",server_status);
+  CLOG_TPRINTLN("P2 : statement_warn_count = %d",statement_warn_count);
+  CLOG_TPRINTLN("P3 : affected_rows = %l",affected_rows);
+  CLOG_TPRINTLN("P4 : last_insert_id = %l",last_insert_id);
+  CLOG_TPRINTLN("P5 : message= %s",message);
+  CLOG_TPRINTLN("P6 : skip_flush= %d",skip_flush);
+
   const bool retval=
     net_send_ok(thd, server_status, statement_warn_count,
                 affected_rows, last_insert_id, message, false, skip_flush);
@@ -625,6 +642,10 @@ bool Protocol::send_ok(uint server_status, uint statement_warn_count,
 bool Protocol::send_eof(uint server_status, uint statement_warn_count)
 {
   DBUG_ENTER("Protocol::send_eof");
+  CLOG_FUNCTIOND("======= Protocol::send_eof() "); 
+  CLOG_TPRINTLN("P1 : Server_status  = %d",server_status);
+  CLOG_TPRINTLN("P2 : statement_warn_count = %d",statement_warn_count);
+
   bool retval= net_send_eof(thd, server_status, statement_warn_count);
   DBUG_RETURN(retval);
 }
@@ -640,6 +661,11 @@ bool Protocol::send_error(uint sql_errno, const char *err_msg,
                           const char *sql_state)
 {
   DBUG_ENTER("Protocol::send_error");
+  CLOG_FUNCTIOND("======= Protocol::send_error() "); 
+  CLOG_TPRINTLN("P1 : Err No = %d",sql_errno);
+  CLOG_TPRINTLN("P2 : Err Msg = %s",err_msg);
+  CLOG_TPRINTLN("P3 : sql state = %s",sql_state);
+    
   const bool retval= net_send_error_packet(thd, sql_errno, err_msg, sql_state);
   DBUG_RETURN(retval);
 }
@@ -797,6 +823,8 @@ bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)
   String *local_packet= prot.storage_packet();
   CHARSET_INFO *thd_charset= thd->variables.character_set_results;
   DBUG_ENTER("Protocol::send_result_set_metadata");
+  CLOG_FUNCTIOND("bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)");
+  CLOG_TPRINTLN("Send name and type of result to client.");
 
   if (flags & SEND_NUM_ROWS)
   {				// Packet with number of elements
