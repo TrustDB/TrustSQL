@@ -21,6 +21,7 @@ Build:
 --------
 
 #### build essentials
+
 Refer followings for UBUNTU
 sudo apt-get install build-essential libtool  autotools-dev autoconf  pkg-config  libssl-dev
 sudo apt install cmake
@@ -43,9 +44,8 @@ make
 sudo make install
 
 #### TrustSQL build
-The following command builds a server the same way that is used for building releases. Use  `cmake . -DCMAKE_TRUSTSQL_BUILD=Release`  to build for debugging.
-
-cmake . -DCMAKE_TRUSTSQL_BUILD=Release && make -j8
+The following command builds a server the same way that is used for building releases. Use  `cmake . -DCMAKE_TRUSTSQL_BUILD=RELEASE`  to build for debugging.
+cmake . -DCMAKE_TRUSTSQL_BUILD=RELEASE && make -j8
 
 If you do not put the option, it works as a MariaDB server.
 You can find my example in file cmake_trustsql
@@ -60,7 +60,7 @@ TrustDB inc, is a distributed ledger technology company in South, Korea.
 Help:
 -----
 If you need any help please send me an e-mail.
-booltaing@gmail.com
+booltaking@gmail.com
 
 
 License:

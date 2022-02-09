@@ -3,7 +3,7 @@ echo "==========================="
 echo "TrustSQL CMAKE BUILD       "
 echo "==========================="
 
-cmake . -DCMAKE_TRUSTSQL_BUILD=DEBUG 
+cmake . -DCMAKE_TRUSTSQL_BUILD=RELEASE 
 
 touch ./sql/sqyl_yacc.yy
 
