@@ -1,47 +1,66 @@
+
 Code status:
 ------------
 
-* [![tests status](https://secure.travis-ci.org/MariaDB/server.png?branch=10.3)](https://travis-ci.org/MariaDB/server) travis-ci.org (10.3 branch)
+## TrustSQL: World 1st distributed ledger function enabled RDBMS
 
-## MariaDB: drop-in replacement for MySQL
+TrustSQL is designed as a node application in distributed ledger environment.
+It replace peer application like as Bitcoin daemon or Ethreum daemon.
+RDBMS is quite advanced data management method. Now you can use it on distributed ledger system with all features of RDBMS.
 
-MariaDB is designed as a drop-in replacement of MySQL(R) with more
-features, new storage engines, fewer bugs, and better performance.
+The base of TrustSQL is MariaDB v10.3.11.
+It works same with MariaDB also because TrustSQL doens't remove any features of MariaDB.
+TrustSQL just add some features for blockchain on MariaDB.
 
-MariaDB is brought to you by the MariaDB Foundation.
-Please read the CREDITS file for details about the MariaDB Foundation,
-and who is developing MariaDB.
+Now, all applcation developers on RDBMS can be blockchain or distributed ledger application developers with ease.
+You just need very little efforts to understand how the TrustSQL makes trust on RDBMS
+With detail, you have to learn how to design data schema to be trusted with additional constraints for trust.
 
-MariaDB is developed by many of the original developers of MySQL who
-now work for the MariaDB Foundation and the MariaDB Corporation, and by many people in
-the community.
 
-MySQL, which is the base of MariaDB, is a product and trademark of Oracle
-Corporation, Inc. For a list of developers and other contributors,
-see the Credits appendix.  You can also run 'SHOW authors' to get a
-list of active contributors.
+Build:
+--------
 
-A description of the MariaDB project and a manual can be found at:
+#### build essentials
+Refer followings for UBUNTU
+sudo apt-get install build-essential libtool  autotools-dev autoconf  pkg-config  libssl-dev
+sudo apt install cmake
+sudo apt-get install libaio1
+sudo apt-get install gnutls-dev
+sudo apt-get install libjemalloc-dev
+sudo apt install libgnutls-dev
+sudo apt-get install libncurses5-dev
+sudo apt-get install bison
+sudo apt install librocksdb-dev
+apt-get install -y zlib1g-dev
+sudo apt-get update
+sudo apt-get upgrade
 
-https://mariadb.org/
+#### secp256k1 library
+git clone https://github.com/urbit/secp256k1
+./authogen.sh
+./configure --enable-jni --enable-experimental --enable-module-schnorr --enable-module-ecdh
+make
+sudo make install
 
-https://mariadb.com/kb/en/
+#### TrustSQL build
+The following command builds a server the same way that is used for building releases. Use  `cmake . -DCMAKE_TRUSTSQL_BUILD=Release`  to build for debugging.
 
-https://mariadb.com/kb/en/mariadb-vs-mysql-features/
+cmake . -DCMAKE_TRUSTSQL_BUILD=Release && make -j8
 
-https://mariadb.com/kb/en/mariadb-versus-mysql-features/
+If you do not put the option, it works as a MariaDB server.
+You can find my example in file cmake_trustsql
 
-https://mariadb.com/kb/en/mariadb-versus-mysql-compatibility/
 
-As MariaDB is a full replacement of MySQL, the MySQL manual at
-http://dev.mysql.com/doc is generally applicable.
+
+Who we are:
+----------
+TrustDB inc, is a distributed ledger technology company in South, Korea.
+ 
 
 Help:
 -----
-
-More help is available from the Maria Discuss mailing list
-https://launchpad.net/~maria-discuss
-and the #maria IRC channel on Freenode.
+If you need any help please send me an e-mail.
+booltaing@gmail.com
 
 
 License:
@@ -51,29 +70,8 @@ License:
 
 NOTE: 
 
-MariaDB is specifically available only under version 2 of the GNU
+TrustSQL is specifically available only under version 2 of the GNU
 General Public License (GPLv2). (I.e. Without the "any later version"
-clause.) This is inherited from MySQL. Please see the README file in
-the MySQL distribution for more information.
-
-License information can be found in the COPYING, COPYING.LESSER,
-and COPYING.thirdparty files.
-
-***************************************************************************
-
-Bug Reports:
-------------
-
-Bug and/or error reports regarding MariaDB should be submitted at:
-https://jira.mariadb.org
-
-For reporting security vulnerabilities see:
-https://mariadb.org/about/security-policy/
-
-Bugs in the MySQL code can also be submitted at:
-https://bugs.mysql.com
-
-The code for MariaDB, including all revision history, can be found at:
-https://github.com/MariaDB/server
+clause.) This is inherited from MariaDB.
 
 ***************************************************************************
