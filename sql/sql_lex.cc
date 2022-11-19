@@ -7112,7 +7112,7 @@ bool LEX::set_user_variable(THD *thd, const LEX_CSTRING *name, Item *val)
   set_var_user *var;
   CLOG_FUNCTIOND("bool LEX::set_user_variable(THD *thd, const LEX_CSTRING *name, Item *val)");
   CLOG_TPRINTLN("name = %s",name->str);
-  CLOG_TPRINTLN("val  = %s",val->val_str()->ptr());
+  //CLOG_TPRINTLN("val  = %s",val->val_str()->ptr()); It makes big trouble -> 2022,20,Nov
   if (unlikely(!(item= new (thd->mem_root) Item_func_set_user_var(thd, name,
                                                                   val))) ||
       unlikely(!(var= new (thd->mem_root) set_var_user(item))))

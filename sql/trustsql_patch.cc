@@ -849,12 +849,35 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 			}
 		}
 		if(target_found==false) {			
-			my_error(5001,MYF(0));
+			my_error(5001,MYF(0),"Fail - SIGNATURE column is not exist in column list");
 			goto err;
 		}
 		cf_it.rewind();		
 	}
-	// Condition 2. if the sig_column_name don't have constraint name, give it with default naming.
+
+	// Condition 2. if verification_key_type==INTERNAL_COLUMN_KEY AND sig_field_type==sign_only_field then
+	//				verification_column)name should be in column list
+	sfi_it.rewind();
+	while(sfield=sfi_it++) {
+		target_found=false;
+		if(sfield->verification_key_type==INTERNAL_COLUMN_KEY & sfield->sig_field_type==sign_only_field) {
+			CLOG_TPRINTLN(" verification key column name = %s",sfield->verification_column_name.str);
+			while(cfield=cf_it++) {
+				CLOG_TPRINTLN(" cfield_name=%s",cfield->field_name.str);
+				if (lex_string_cmp(system_charset_info, &sfield->verification_column_name, &cfield->field_name) == 0) {
+					target_found=true;
+					break;
+				}
+			}
+			if(target_found==false) {
+				my_error(5002,MYF(0),"Fail - VERIFY KEY column is not exist in column list");
+				goto err;
+			}
+			cf_it.rewind();
+		}
+	}
+
+	// Condition 3. if the sig_column_name don't have constraint name, give it with default naming.
 	sfi_it.rewind();
 	num=0;
 	while(sfield=sfi_it++) {		
@@ -865,10 +888,11 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 	}
 	if(num==0) {
 		// no sinature field -> fail	
-		my_error(5006,MYF(0));		
+		my_error(5003,MYF(0),"Fail - No SIGNATURE column ");
 		goto err;
 	}
-	// Condition 3. if TRUSTED ORDERED Table, there should be only one TRUSTED ORDER Constraints.
+
+	// Condition 4. if TRUSTED ORDERED Table, there should be only one TRUSTED ORDER Constraints.
 	if(thd->lex->trust_options->Trusted_table_type==2) {   // TO do 2 -> Table_trust)options::TRUSTED_ORDERD_TYPE
 		sfi_it.rewind();
 		order_feildnr=0;
@@ -876,7 +900,7 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 		while(sfield=sfi_it++) {
 			if(sfield->sig_field_type==sign_ordered_field) {
 				if(target_found==true) {
-					my_error(5002,MYF(0));
+					my_error(5004,MYF(0),"Fail - Found one more ORDER SIGN column");
 					goto err;
 				} else {
 					order_field_name = sfield->order_column_name;
@@ -886,11 +910,12 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 			}
 		}
 		if(target_found==false) {			
-			my_error(5003,MYF(0));
+			my_error(5005,MYF(0),"Fail - No ORDER SIGN column");
 			// No Ordered Sign
 			goto err;
 		}
-		// Condition 4. order_field_name should be in the create_fields list.
+
+		// Condition 5. order_field_name should be in the create_fields list.
 		cf_it.rewind();
 		target_found=false;
 		order_feildnr=0;
@@ -902,7 +927,7 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 			order_feildnr++;
 		}
 		if(target_found==false)  {
-			my_error(5004,MYF(0));
+			my_error(5006,MYF(0),"Fail - ORDER column is not exist in column list");
 			goto err;
 		}
 		// Condition 5. if time_column_name exist, the_column_name should be in the create_fields list.
@@ -916,7 +941,7 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 				}
 			}
 			if(target_found==false)  {
-				my_error(5005,MYF(0));
+				my_error(5007,MYF(0),"Fail - TIMED column is not exist in column list");
 				goto err;
 			}
 		}
@@ -959,13 +984,13 @@ bool tldgr_trust_options_precheck(THD *thd, const LEX_CSTRING *table_name, List<
 		trigger_after_insert_sign
 	*/
 
-	if(trust_options->table_issuer_pub_key.str==0) { my_error(5007,MYF(0),"Fail - TABLE_ISSUER_PUB_KEY missed"); goto err; }
-	if(trust_options->table_schema.str==0) { my_error(5008,MYF(0),"Fail - TABLE_SCHEMA missed"); goto err; }
-	if(trust_options->table_schema_sign.str==0) { my_error(5009,MYF(0),"Fail - TABLE_SCHEMA_SIGN missed"); goto err; }
+	if(trust_options->table_issuer_pub_key.str==0) { my_error(5008,MYF(0),"Fail - TABLE_ISSUER_PUB_KEY missed"); goto err; }
+	if(trust_options->table_schema.str==0) { my_error(5009,MYF(0),"Fail - TABLE_SCHEMA missed"); goto err; }
+	if(trust_options->table_schema_sign.str==0) { my_error(5010,MYF(0),"Fail - TABLE_SCHEMA_SIGN missed"); goto err; }
 
 	if(thd->lex->create_info.is_Trusted_Ordered()) {
-		if(trust_options->tosa_pub_key.str==0) { my_error(5010,MYF(0),"Fail - TOSA_PUB_KEY missed"); goto err; }
-		if(trust_options->tosa_master_pub_key.str==0) { my_error(5011,MYF(0),"Fail - TOSA_MASTER_PUB_KEY missed"); goto err; }
+		if(trust_options->tosa_pub_key.str==0) { my_error(5011,MYF(0),"Fail - TOSA_PUB_KEY missed"); goto err; }
+		if(trust_options->tosa_master_pub_key.str==0) { my_error(5012,MYF(0),"Fail - TOSA_MASTER_PUB_KEY missed"); goto err; }
 	}
 
 	// Table Sign Check

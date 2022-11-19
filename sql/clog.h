@@ -10,10 +10,11 @@
 #define SRC_CLOG_H_
 
 // Console Debug On/Off
+
 #ifdef TRUSTSQL_DEBUG
-#define CLOG_ON 0
-#else
 #define CLOG_ON 1
+#else
+#define CLOG_ON 0
 #endif
 
 #if CLOG_ON==1
